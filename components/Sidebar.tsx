@@ -144,30 +144,39 @@ const navigation = [
 export default function Sidebar() {
   const pathname = usePathname();
 
+  const linkClass = (active: boolean) =>
+    `group relative flex items-center overflow-hidden rounded-xl px-3 py-3 transition-all duration-200 ${
+      active
+        ? "bg-gradient-to-r from-indigo-500/25 to-violet-500/15 text-white shadow-lg shadow-indigo-500/10"
+        : "text-slate-400 hover:translate-x-0.5 hover:bg-white/5 hover:text-white"
+    }`;
+
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-[250px] flex-col bg-[#111827] text-white lg:flex">
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-[250px] flex-col bg-gradient-to-b from-[#0f172a] via-[#111c33] to-[#0f172a] text-white lg:flex">
 
       {/* Brand */}
       <div className="flex h-[82px] items-center border-b border-white/10 px-7">
-        <img
-          src="/logo.jpeg"
-          alt="品牌 Logo Brand logo"
-          className="mr-3 h-10 w-10 shrink-0 rounded-xl bg-white object-contain p-1"
-        />
+        <div className="mr-3 shrink-0 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 p-[2px] shadow-lg shadow-indigo-500/30">
+          <img
+            src="/logo.jpeg"
+            alt="品牌 Logo Brand logo"
+            className="h-9 w-9 rounded-[10px] bg-white object-contain p-1"
+          />
+        </div>
 
         <div>
-          <div className="text-[15px] font-bold tracking-wide">
+          <div className="bg-gradient-to-r from-white to-slate-300 bg-clip-text text-[15px] font-bold tracking-wide text-transparent">
             人力 Workforce
           </div>
 
-          <div className="text-[11px] text-slate-400">
-            分析平台 ANALYTICS PLATFORM
+          <div className="text-[11px] tracking-wider text-slate-500">
+            分析平台 ANALYTICS
           </div>
         </div>
       </div>
 
       {/* Navigation */}
-      <div className="px-4 py-6">
+      <div className="flex-1 overflow-y-auto px-4 py-6">
 
         <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
           数据分析 Analytics
@@ -184,21 +193,35 @@ export default function Sidebar() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={
-                  isActive
-                    ? "flex items-center rounded-xl bg-indigo-500/15 px-3 py-3 text-indigo-300"
-                    : "flex items-center rounded-xl px-3 py-3 text-slate-400 transition hover:bg-white/5 hover:text-white"
-                }
+                className={linkClass(isActive)}
               >
-                <SidebarIcon type={item.icon} />
+                {isActive && (
+                  <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-gradient-to-b from-indigo-400 to-violet-500 shadow shadow-indigo-400/50" />
+                )}
+
+                <span
+                  className={`transition-transform duration-200 group-hover:scale-110 ${
+                    isActive
+                      ? "text-indigo-300"
+                      : "text-slate-500 group-hover:text-slate-300"
+                  }`}
+                >
+                  <SidebarIcon type={item.icon} />
+                </span>
 
                 <span
                   className={`ml-3 text-sm ${
-                    isActive ? "font-medium" : ""
+                    isActive
+                      ? "font-semibold text-white"
+                      : ""
                   }`}
                 >
                   {item.name}
                 </span>
+
+                {isActive && (
+                  <span className="ml-auto h-1.5 w-1.5 rounded-full bg-indigo-400 shadow shadow-indigo-400/60" />
+                )}
               </Link>
             );
           })}
@@ -211,38 +234,57 @@ export default function Sidebar() {
 
         <Link
           href="/quality"
-          className={
+          className={linkClass(
             pathname === "/quality"
-              ? "flex items-center rounded-xl bg-indigo-500/15 px-3 py-3 text-indigo-300"
-              : "flex items-center rounded-xl px-3 py-3 text-slate-400 transition hover:bg-white/5 hover:text-white"
-          }
+          )}
         >
-          <SidebarIcon type="data" />
+          {pathname === "/quality" && (
+            <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-gradient-to-b from-indigo-400 to-violet-500 shadow shadow-indigo-400/50" />
+          )}
+
+          <span
+            className={`transition-transform duration-200 group-hover:scale-110 ${
+              pathname === "/quality"
+                ? "text-indigo-300"
+                : "text-slate-500 group-hover:text-slate-300"
+            }`}
+          >
+            <SidebarIcon type="data" />
+          </span>
 
           <span
             className={`ml-3 text-sm ${
               pathname === "/quality"
-                ? "font-medium"
+                ? "font-semibold text-white"
                 : ""
             }`}
           >
             数据质量 Data Quality
           </span>
+
+          {pathname === "/quality" && (
+            <span className="ml-auto h-1.5 w-1.5 rounded-full bg-indigo-400 shadow shadow-indigo-400/60" />
+          )}
         </Link>
       </div>
 
       {/* Bottom */}
-      <div className="mt-auto border-t border-white/10 p-5">
-        <div className="rounded-xl bg-white/5 p-4">
-          <div className="flex items-center">
-            <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-lg shadow-emerald-400/40" />
+      <div className="border-t border-white/10 p-5">
+        <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-4 backdrop-blur">
+          <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/20 blur-xl" />
 
-            <span className="ml-2 text-xs font-medium text-slate-300">
+          <div className="relative flex items-center">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-lg shadow-emerald-400/40" />
+            </span>
+
+            <span className="ml-2 text-xs font-semibold text-slate-200">
               数据管道 Data Pipeline
             </span>
           </div>
 
-          <p className="mt-2 text-[11px] leading-5 text-slate-500">
+          <p className="relative mt-2 text-[11px] leading-5 text-slate-400">
             所有处理后的数据集均已可用 All processed datasets are available
           </p>
         </div>

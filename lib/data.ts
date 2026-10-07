@@ -305,6 +305,23 @@ export function getDashboardData() {
         dashboard,
         "trial_failure_job_reference"
       ),
+
+
+      arrivalDaily: getDataset(dashboard, "arrival_daily"),
+      arrivalSupplier: getDataset(dashboard, "arrival_supplier"),
+      arrivalWarehouse: getDataset(dashboard, "arrival_warehouse"),
+      arrivalSummary: getDataset(dashboard, "arrival_summary"),
+      
+      acceptanceSummary: getDataset(dashboard, "acceptance_summary"),
+
+      arrivalTrackingSummary: getDataset(dashboard, "arrival_tracking_summary"),
+      arrivalTrackingWarehouse: getDataset(dashboard, "arrival_tracking_warehouse"),
+      arrivalTrackingReason: getDataset(dashboard, "arrival_tracking_reason"),
+      arrivalTrackingDaily: getDataset(dashboard, "arrival_tracking_daily"),
+      arrivalTrackingSupplier: getDataset(dashboard, "arrival_tracking_supplier"),
+
+
+
   };
 }
 

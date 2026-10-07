@@ -1,5 +1,8 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
+import Funnel, {
+  type FunnelData,
+} from "@/components/Funnel";
 
 import {
   getDashboardData,
@@ -231,6 +234,13 @@ export default function Home() {
     warehouseSummary,
     trialFailureSupplier,
     trialFailureWarehouse,
+    arrivalSupplier,
+    arrivalWarehouse,
+    arrivalSummary,
+    acceptanceSummary,
+    arrivalTrackingSummary,
+    arrivalTrackingWarehouse,
+    arrivalTrackingSupplier,
   } = data;
 
   /* =======================================================
@@ -446,6 +456,125 @@ export default function Home() {
     );
 
   /* =======================================================
+     Fulfillment Funnel (SOP 口径)
+  ======================================================= */
+
+  // 到岗数据来自考勤表；lib/data.ts 需把 arrival_* 数据集暴露出来，
+  // 没有考勤数据时这些数组为空，漏斗回到"待数据"状态
+  const arrivalRows = arrivalSummary ?? [];
+  const arrivalPersons =
+    arrivalRows.length > 0
+      ? numberValue(
+          getValue(arrivalRows[0], [
+            "到岗人数",
+          ])
+        )
+      : null;
+  const arrivalEvents =
+    arrivalRows.length > 0
+      ? numberValue(
+          getValue(arrivalRows[0], [
+            "到岗人次",
+          ])
+        )
+      : null;
+  const arrivalWithHours =
+    arrivalRows.length > 0
+      ? numberValue(
+          getValue(arrivalRows[0], [
+            "有工时人数",
+          ])
+        )
+      : null;
+
+  // 应到岗明细：用人员到岗表口径（不再用老考勤数据）
+  const topArrivalWarehouses = (
+    arrivalTrackingWarehouse ?? []
+  )
+    .map((row) => ({
+      name:
+        getValue(row, ["仓库"]) ||
+        "未分类",
+      count: numberValue(
+        getValue(row, ["到岗人次"])
+      ),
+    }))
+    .filter((x) => x.name !== "未分类")
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  const topArrivalSuppliers = (
+    arrivalTrackingSupplier ?? []
+  )
+    .map((row) => ({
+      name:
+        getValue(row, ["供应商"]) ||
+        "未分类",
+      count: numberValue(
+        getValue(row, ["到岗人次"])
+      ),
+    }))
+    .filter((x) => x.name !== "未分类")
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  // 派遣状态口径的已确认/试工不通过/待确认（去重人数）
+  const acceptanceRows = acceptanceSummary ?? [];
+  const trialFailedPersons =
+    acceptanceRows.length > 0
+      ? numberValue(
+          getValue(acceptanceRows[0], [
+            "试工不通过人数",
+          ])
+        )
+      : null;
+  const pendingConfirmPersons =
+    acceptanceRows.length > 0
+      ? numberValue(
+          getValue(acceptanceRows[0], [
+            "待确认人数",
+          ])
+        )
+      : null;
+
+  // 已到岗/已接受：人员到岗表口径（用户确认）
+  //   到岗 = NO SHOW 未勾选；已接受 = 到岗且无不符合要求原因
+  const atSummaryRows = arrivalTrackingSummary ?? [];
+  const atSummary = atSummaryRows[0] ?? {};
+  const atArrived = numberValue(getValue(atSummary, ["到岗人次"]));
+  const atAccepted = numberValue(getValue(atSummary, ["已接受人次"]));
+  const atNoShow = numberValue(getValue(atSummary, ["NoShow人次"]));
+  const atSentBack = numberValue(getValue(atSummary, ["被退回人次"]));
+  const hasAtData = atSummaryRows.length > 0;
+  const funnelData: FunnelData = {
+    requested: totalDemand,
+    issued: totalRequested,
+    dispatched: totalFilled,
+    dispatchedPersons: 0,
+    arrived: hasAtData ? atArrived : null,
+    arrivedEvents: hasAtData ? atArrived : null,
+    arrivedWithHours: null,
+    accepted: hasAtData ? atAccepted : null,
+    trialFailed: trialFailedPersons,
+    pendingConfirm: pendingConfirmPersons,
+    noShowPending: hasAtData ? atNoShow : null,
+    sentBack: hasAtData ? atSentBack : null,
+    topWarehouses: [...warehouses]
+      .sort(
+        (a, b) =>
+          b.requested - a.requested
+      )
+      .slice(0, 5),
+    topSuppliers: [...suppliers]
+      .sort(
+        (a, b) => b.filled - a.filled
+      )
+      .slice(0, 5),
+    topArrivalWarehouses,
+    topArrivalSuppliers,
+  };
+
+  /* =======================================================
      Trial Failure Rankings
   ======================================================= */
 
@@ -540,7 +669,7 @@ export default function Home() {
         )} — ${formatDateLabel(
           endDate
         )}`
-      : "统计周期不可用 Reporting period unavailable";
+      : "统计周期不可用 Reporting Period unavailable";
 
   /* =======================================================
      Management Alerts
@@ -634,25 +763,51 @@ export default function Home() {
 
         <div className="px-5 py-7 md:px-8">
 
-          {/* Intro */}
-
-          <div className="mb-7">
-
-            <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-              人力运营 Labor Operations
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              各供应商与仓库的月度人力表现。Monthly staffing performance across suppliers and warehouses.
-            </p>
-
-          </div>
-
           {/* =================================================
-              KPI CARDS
+              FULFILLMENT FUNNEL (SOP) — 首页先放漏斗
           ================================================= */}
 
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <section>
+            <div className="mb-4">
+              <p className="text-xs font-semibold uppercase tracking-widest text-indigo-500">
+                SOP 指标 SOP Metrics
+              </p>
+
+              <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
+                履约漏斗 Fulfillment Funnel
+              </h2>
+
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+                从需求到上岗的完整链条：需求 → 已发单 →
+                供应商已派遣 → 应到岗（当天应到） →
+                已接受。应到岗里分出 No Show（没来）和被退回（不合格），剩下的是已接受。点击每个阶段查看明细。
+                The full chain from request to
+                start — click each stage for
+                details. Scheduled arrivals split
+                into No-Show and Sent Back;
+                the rest are accepted.
+              </p>
+            </div>
+
+            <Funnel data={funnelData} />
+          </section>
+
+          {/* =================================================
+              KPI CARDS — 挪到漏斗下方
+          ================================================= */}
+
+          <section className="mt-10">
+            <div className="mb-4">
+              <h2 className="text-2xl font-bold tracking-tight text-slate-900">
+                关键指标 Key Metrics
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                各供应商与仓库的月度人力表现。Monthly staffing performance across suppliers and warehouses.
+              </p>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
 
             {/* Demand */}
 
@@ -671,6 +826,16 @@ export default function Home() {
                 <span className="text-xs text-slate-400">
                   需求池 Demand Pool
                 </span>
+
+                <span className="text-xs font-semibold text-slate-500">
+                  {startDate
+                    ? new Date(startDate).toLocaleDateString("en-US", {
+                        month: "short",
+                        year: "numeric",
+                      })
+                    : "—"}
+                </span>
+
               </div>
 
             </div>
@@ -782,7 +947,7 @@ export default function Home() {
               </div>
 
             </div>
-
+            </div>
           </section>
 
           {/* =================================================
