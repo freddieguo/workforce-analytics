@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 
 type SidebarIconType =
   | "overview"
@@ -148,15 +149,18 @@ function NavLink({
   icon,
   name,
   active,
+  onClick,
 }: {
   href: string;
   icon: SidebarIconType;
   name: string;
   active: boolean;
+  onClick?: () => void;
 }) {
   return (
     <Link
       href={href}
+      onClick={onClick}
       className={`group relative flex items-center gap-3 rounded-2xl px-3 py-2.5 transition-all duration-300 ${
         active
           ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-[0_8px_24px_rgba(99,102,241,0.4)]"
@@ -188,11 +192,46 @@ function NavLink({
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [mobileOpen, setMobileOpen] = useState(false);
   const isActive = (href: string) =>
     pathname === href || (href !== "/" && pathname.startsWith(href));
+  const closeMobile = () => setMobileOpen(false);
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col overflow-hidden bg-[#0b1226] text-white lg:flex">
+    <>
+      {/* 移动端悬浮菜单按钮 */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        aria-label="打开菜单 Open menu"
+        className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-[0_8px_24px_rgba(99,102,241,0.5)] transition-transform active:scale-95 lg:hidden"
+      >
+        <svg
+          className="h-6 w-6"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+        >
+          <path d="M4 7h16" />
+          <path d="M4 12h16" />
+          <path d="M4 17h16" />
+        </svg>
+      </button>
+
+      {/* 移动端遮罩 */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
+          onClick={closeMobile}
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-[264px] flex-col overflow-hidden bg-[#0b1226] text-white transition-transform duration-300 lg:z-30 lg:translate-x-0 ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
       {/* ambient glow */}
       <div className="pointer-events-none absolute -top-32 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-indigo-600/25 blur-[80px]" />
       <div className="pointer-events-none absolute -bottom-32 -left-16 h-64 w-64 rounded-full bg-violet-600/15 blur-[80px]" />
@@ -215,6 +254,24 @@ export default function Sidebar() {
             HRBP Dashboard
           </div>
         </div>
+        {/* 移动端关闭按钮 */}
+        <button
+          onClick={closeMobile}
+          aria-label="关闭菜单 Close menu"
+          className="ml-auto flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-slate-300 transition hover:bg-white/20 lg:hidden"
+        >
+          <svg
+            className="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+          >
+            <path d="M6 6l12 12" />
+            <path d="M18 6L6 18" />
+          </svg>
+        </button>
       </div>
 
       {/* Navigation */}
@@ -234,6 +291,7 @@ export default function Sidebar() {
               icon={item.icon}
               name={item.name}
               active={isActive(item.href)}
+              onClick={closeMobile}
             />
           ))}
         </nav>
@@ -250,6 +308,7 @@ export default function Sidebar() {
           icon="data"
           name="数据质量 Data Quality"
           active={pathname === "/quality"}
+          onClick={closeMobile}
         />
       </div>
 
@@ -272,5 +331,6 @@ export default function Sidebar() {
         </div>
       </div>
     </aside>
+    </>
   );
 }

@@ -564,6 +564,9 @@ ARRIVAL_TRACKING_SUPPLIER_COLUMNS = [
     "供应商", "拟到岗人次", "到岗人次", "已接受人次", "NoShow人次", "被退回人次",
 ]
 ARRIVAL_TRACKING_REASON_COLUMNS = ["不符合要求原因", "人次"]
+ARRIVAL_TRACKING_JOB_COLUMNS = [
+    "工种", "拟到岗人次", "到岗人次", "已接受人次", "NoShow人次", "被退回人次",
+]
 ARRIVAL_TRACKING_DAILY_COLUMNS = [
     "日期", "拟到岗人次", "到岗人次", "已接受人次", "NoShow人次", "被退回人次",
 ]
@@ -588,11 +591,13 @@ def build_arrival_tracking(at_rows):
     by_wh = defaultdict(list)
     by_sup = defaultdict(list)
     by_day = defaultdict(list)
+    by_job = defaultdict(list)
     by_reason = defaultdict(int)
     for r in at_rows:
         by_wh[r["仓库"] or "未分类"].append(r)
         by_sup[r["机构"] or "未分类"].append(r)
         by_day[r["到岗日期"] or "未分类"].append(r)
+        by_job[r.get("职位") or "未分类"].append(r)
         if r["不符合要求原因"]:
             by_reason[r["不符合要求原因"]] += 1
     wh_rows = []
@@ -613,6 +618,11 @@ def build_arrival_tracking(at_rows):
     reason_rows = [{"不符合要求原因": k, "人次": v}
                    for k, v in sorted(by_reason.items(),
                                       key=lambda x: -x[1])]
+    job_rows = []
+    for job in sorted(by_job):
+        t, a, k, n, s = _at_stats(by_job[job])
+        job_rows.append({"工种": job, "拟到岗人次": t, "到岗人次": a,
+                         "已接受人次": k, "NoShow人次": n, "被退回人次": s})
     return {
         "arrival_tracking_summary": (
             ARRIVAL_TRACKING_SUMMARY_COLUMNS,
@@ -624,6 +634,8 @@ def build_arrival_tracking(at_rows):
             ARRIVAL_TRACKING_SUPPLIER_COLUMNS, sup_rows),
         "arrival_tracking_reason": (
             ARRIVAL_TRACKING_REASON_COLUMNS, reason_rows),
+        "arrival_tracking_job": (
+            ARRIVAL_TRACKING_JOB_COLUMNS, job_rows),
         "arrival_tracking_daily": (
             ARRIVAL_TRACKING_DAILY_COLUMNS, day_rows),
     }
@@ -634,6 +646,7 @@ ARRIVAL_TRACKING_EMPTY_SCHEMAS = {
     "arrival_tracking_warehouse": ARRIVAL_TRACKING_WAREHOUSE_COLUMNS,
     "arrival_tracking_supplier": ARRIVAL_TRACKING_SUPPLIER_COLUMNS,
     "arrival_tracking_reason": ARRIVAL_TRACKING_REASON_COLUMNS,
+    "arrival_tracking_job": ARRIVAL_TRACKING_JOB_COLUMNS,
     "arrival_tracking_daily": ARRIVAL_TRACKING_DAILY_COLUMNS,
 }
 
