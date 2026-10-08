@@ -145,10 +145,10 @@ export default function LoginPage() {
               />
             </div>
             <h1 className="mt-6 bg-gradient-to-r from-white via-indigo-100 to-white bg-clip-text text-3xl font-extrabold tracking-wide text-transparent">
-              HR 看板
+              HRBP 数据看板
             </h1>
             <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">
-              HR Dashboard
+              HRBP Dashboard
             </p>
           </div>
 
