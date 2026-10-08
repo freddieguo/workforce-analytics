@@ -16,7 +16,7 @@ function SidebarIcon({
 }: {
   type: SidebarIconType;
 }) {
-  const common = "h-5 w-5 stroke-[1.8]";
+  const common = "h-[18px] w-[18px] stroke-[1.8]";
 
   if (type === "overview") {
     return (
@@ -26,10 +26,10 @@ function SidebarIcon({
         fill="none"
         stroke="currentColor"
       >
-        <rect x="3" y="3" width="7" height="7" rx="1" />
-        <rect x="14" y="3" width="7" height="7" rx="1" />
-        <rect x="3" y="14" width="7" height="7" rx="1" />
-        <rect x="14" y="14" width="7" height="7" rx="1" />
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
       </svg>
     );
   }
@@ -103,12 +103,9 @@ function SidebarIcon({
       fill="none"
       stroke="currentColor"
     >
-      <path d="M3 6h18" />
-      <path d="M3 12h18" />
-      <path d="M3 18h18" />
-      <circle cx="7" cy="6" r="1" />
-      <circle cx="15" cy="12" r="1" />
-      <circle cx="10" cy="18" r="1" />
+      <path d="M4 6h16" strokeLinecap="round" />
+      <path d="M4 12h16" strokeLinecap="round" />
+      <path d="M4 18h10" strokeLinecap="round" />
     </svg>
   );
 }
@@ -133,7 +130,7 @@ const navigation = [
     name: "工种分析 Job Analysis",
     href: "/job",
     icon: "data" as SidebarIconType,
-  },  
+  },
   {
     name: "加班分析 OT Analysis",
     href: "/ot",
@@ -146,151 +143,131 @@ const navigation = [
   },
 ];
 
+function NavLink({
+  href,
+  icon,
+  name,
+  active,
+}: {
+  href: string;
+  icon: SidebarIconType;
+  name: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`group relative flex items-center gap-3 rounded-2xl px-3 py-2.5 transition-all duration-300 ${
+        active
+          ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-[0_8px_24px_rgba(99,102,241,0.4)]"
+          : "text-slate-400 hover:bg-white/[0.06] hover:text-white"
+      }`}
+    >
+      <span
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all duration-300 ${
+          active
+            ? "bg-white/20 text-white shadow-inner"
+            : "bg-white/[0.04] text-slate-500 group-hover:bg-white/10 group-hover:text-indigo-300"
+        }`}
+      >
+        <SidebarIcon type={icon} />
+      </span>
+      <span
+        className={`text-[13px] leading-tight ${
+          active ? "font-bold" : "font-medium"
+        }`}
+      >
+        {name}
+      </span>
+      {active && (
+        <span className="absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/20" />
+      )}
+    </Link>
+  );
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
-
-  const linkClass = (active: boolean) =>
-    `group relative flex items-center overflow-hidden rounded-xl px-3 py-3 transition-all duration-200 ${
-      active
-        ? "bg-gradient-to-r from-indigo-500/25 to-violet-500/15 text-white shadow-lg shadow-indigo-500/10"
-        : "text-slate-400 hover:translate-x-0.5 hover:bg-white/5 hover:text-white"
-    }`;
+  const isActive = (href: string) =>
+    pathname === href || (href !== "/" && pathname.startsWith(href));
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-[250px] flex-col bg-gradient-to-b from-[#0f172a] via-[#111c33] to-[#0f172a] text-white lg:flex">
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col overflow-hidden bg-[#0b1226] text-white lg:flex">
+      {/* ambient glow */}
+      <div className="pointer-events-none absolute -top-32 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-indigo-600/25 blur-[80px]" />
+      <div className="pointer-events-none absolute -bottom-32 -left-16 h-64 w-64 rounded-full bg-violet-600/15 blur-[80px]" />
 
       {/* Brand */}
-      <div className="flex h-[82px] items-center border-b border-white/10 px-7">
-        <div className="mr-3 shrink-0 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 p-[2px] shadow-lg shadow-indigo-500/30">
+      <div className="relative flex items-center gap-3.5 border-b border-white/[0.07] px-6 pb-6 pt-7">
+        <div className="relative shrink-0">
+          <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 opacity-60 blur-md" />
           <img
             src="/logo.jpeg"
             alt="品牌 Logo Brand logo"
-            className="h-9 w-9 rounded-[10px] bg-white object-contain p-1"
+            className="relative h-11 w-11 rounded-2xl bg-white object-contain p-1.5 shadow-xl"
           />
         </div>
-
         <div>
-          <div className="bg-gradient-to-r from-white to-slate-300 bg-clip-text text-[15px] font-bold tracking-wide text-transparent">
-            人力 Workforce
+          <div className="text-[16px] font-extrabold tracking-wide text-white">
+            HRBP <span className="font-semibold text-indigo-300">看板</span>
           </div>
-
-          <div className="text-[11px] tracking-wider text-slate-500">
-            分析平台 ANALYTICS
+          <div className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.22em] text-slate-500">
+            HRBP Dashboard
           </div>
         </div>
       </div>
 
       {/* Navigation */}
-      <div className="flex-1 overflow-y-auto px-4 py-6">
+      <div className="relative flex-1 overflow-y-auto px-4 py-6">
+        <div className="mb-3 flex items-center gap-2 px-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+            数据分析 Analytics
+          </p>
+          <div className="h-px flex-1 bg-white/[0.07]" />
+        </div>
 
-        <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-          数据分析 Analytics
-        </p>
-
-        <nav className="space-y-1">
-          {navigation.map((item) => {
-            const isActive =
-              pathname === item.href ||
-              (item.href !== "/" &&
-                pathname.startsWith(item.href));
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={linkClass(isActive)}
-              >
-                {isActive && (
-                  <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-gradient-to-b from-indigo-400 to-violet-500 shadow shadow-indigo-400/50" />
-                )}
-
-                <span
-                  className={`transition-transform duration-200 group-hover:scale-110 ${
-                    isActive
-                      ? "text-indigo-300"
-                      : "text-slate-500 group-hover:text-slate-300"
-                  }`}
-                >
-                  <SidebarIcon type={item.icon} />
-                </span>
-
-                <span
-                  className={`ml-3 text-sm ${
-                    isActive
-                      ? "font-semibold text-white"
-                      : ""
-                  }`}
-                >
-                  {item.name}
-                </span>
-
-                {isActive && (
-                  <span className="ml-auto h-1.5 w-1.5 rounded-full bg-indigo-400 shadow shadow-indigo-400/60" />
-                )}
-              </Link>
-            );
-          })}
+        <nav className="space-y-1.5">
+          {navigation.map((item) => (
+            <NavLink
+              key={item.href}
+              href={item.href}
+              icon={item.icon}
+              name={item.name}
+              active={isActive(item.href)}
+            />
+          ))}
         </nav>
 
-        {/* System */}
-        <p className="mb-3 mt-9 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-          系统 System
-        </p>
+        <div className="mb-3 mt-8 flex items-center gap-2 px-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+            系统 System
+          </p>
+          <div className="h-px flex-1 bg-white/[0.07]" />
+        </div>
 
-        <Link
+        <NavLink
           href="/quality"
-          className={linkClass(
-            pathname === "/quality"
-          )}
-        >
-          {pathname === "/quality" && (
-            <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-gradient-to-b from-indigo-400 to-violet-500 shadow shadow-indigo-400/50" />
-          )}
-
-          <span
-            className={`transition-transform duration-200 group-hover:scale-110 ${
-              pathname === "/quality"
-                ? "text-indigo-300"
-                : "text-slate-500 group-hover:text-slate-300"
-            }`}
-          >
-            <SidebarIcon type="data" />
-          </span>
-
-          <span
-            className={`ml-3 text-sm ${
-              pathname === "/quality"
-                ? "font-semibold text-white"
-                : ""
-            }`}
-          >
-            数据质量 Data Quality
-          </span>
-
-          {pathname === "/quality" && (
-            <span className="ml-auto h-1.5 w-1.5 rounded-full bg-indigo-400 shadow shadow-indigo-400/60" />
-          )}
-        </Link>
+          icon="data"
+          name="数据质量 Data Quality"
+          active={pathname === "/quality"}
+        />
       </div>
 
       {/* Bottom */}
-      <div className="border-t border-white/10 p-5">
-        <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-4 backdrop-blur">
-          <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-emerald-400/20 blur-xl" />
-
-          <div className="relative flex items-center">
+      <div className="relative border-t border-white/[0.07] p-4">
+        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-emerald-500/[0.12] to-transparent p-4">
+          <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-emerald-400/25 blur-2xl" />
+          <div className="relative flex items-center gap-2.5">
             <span className="relative flex h-2.5 w-2.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-lg shadow-emerald-400/40" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
             </span>
-
-            <span className="ml-2 text-xs font-semibold text-slate-200">
+            <span className="text-xs font-bold text-slate-100">
               数据管道 Data Pipeline
             </span>
           </div>
-
-          <p className="relative mt-2 text-[11px] leading-5 text-slate-400">
-            所有处理后的数据集均已可用 All processed datasets are available
+          <p className="relative mt-1.5 text-[11px] leading-5 text-slate-400">
+            所有处理后的数据集均已可用
           </p>
         </div>
       </div>

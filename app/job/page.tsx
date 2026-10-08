@@ -93,7 +93,10 @@ export default function JobPage() {
               <h2 className="mt-3 text-3xl font-bold tracking-tight">
                 {jobs.length} 个工种 · 总体派遣率 {formatPercent(overallRate)}
               </h2>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-violet-100">
+              <p className="mt-1 text-sm font-medium text-violet-200">
+                {jobs.length} jobs · Overall dispatch rate {formatPercent(overallRate)}
+              </p>
+              <p className="mt-3 text-sm leading-6 text-violet-100">
                 {formatNumber(totalFilled)} / {formatNumber(totalRequested)} 人次已派遣，
                 还有 {formatNumber(totalUnfilled)} 人次缺口。
                 {largestGap && <>缺口最大的是 <strong className="text-white">{largestGap.name}</strong>（{formatNumber(largestGap.unfilled)} 人次），</>}
@@ -123,7 +126,7 @@ export default function JobPage() {
                 <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">🔴 缺口最大 Largest Gap</p>
                 <p className="mt-3 truncate text-lg font-bold">{largestGap.name}</p>
                 <p className="mt-1 text-3xl font-bold text-rose-600">{formatNumber(largestGap.unfilled)}</p>
-                <p className="mt-2 text-xs text-slate-500">人次未派遣 · 派遣率 {formatPercent(largestGap.fillRate)}</p>
+                <p className="mt-2 text-xs text-slate-500">未派遣 Undispatched · 派遣率 Dispatch rate {formatPercent(largestGap.fillRate)}</p>
               </div>
             )}
             {worst && (
@@ -131,7 +134,7 @@ export default function JobPage() {
                 <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">⚠️ 派遣率最低 Lowest Rate</p>
                 <p className="mt-3 truncate text-lg font-bold">{worst.name}</p>
                 <p className="mt-1 text-3xl font-bold text-amber-600">{formatPercent(worst.fillRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(worst.filled)} / {formatNumber(worst.requested)} 已派遣</p>
+                <p className="mt-2 text-xs text-slate-500">{formatNumber(worst.filled)} / {formatNumber(worst.requested)} 已派遣 dispatched</p>
               </div>
             )}
             {best && (
@@ -139,7 +142,7 @@ export default function JobPage() {
                 <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">🏆 派遣率最高 Best Rate</p>
                 <p className="mt-3 truncate text-lg font-bold">{best.name}</p>
                 <p className="mt-1 text-3xl font-bold text-emerald-600">{formatPercent(best.fillRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(best.filled)} / {formatNumber(best.requested)} 已派遣</p>
+                <p className="mt-2 text-xs text-slate-500">{formatNumber(best.filled)} / {formatNumber(best.requested)} 已派遣 dispatched</p>
               </div>
             )}
           </section>
@@ -149,9 +152,9 @@ export default function JobPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold">工种排名 Job Ranking</h3>
-                <p className="mt-1 text-xs text-slate-400">按未派遣缺口从大到小排序 · 数据来源：用工需求池（发单详情） Source: Labor Demand Pool</p>
+                <p className="mt-1 text-xs text-slate-400">按未派遣缺口从大到小排序 Rank by Undispatched Gap (High to Low) · 数据来源：用工需求池（发单详情） Source: Labor Demand Pool</p>
               </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">{jobs.length} 个工种</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">{jobs.length} 个工种 jobs</span>
             </div>
 
             {jobs.length === 0 ? (
@@ -191,8 +194,8 @@ export default function JobPage() {
                         />
                       </div>
                       <div className="ml-11 mt-1 flex justify-between text-[11px] text-slate-400">
-                        <span>已派遣 {formatNumber(j.filled)}</span>
-                        <span>未派遣缺口 {formatNumber(j.unfilled)}</span>
+                        <span>已派遣 Dispatched {formatNumber(j.filled)}</span>
+                        <span>未派遣缺口 Undispatched Gap {formatNumber(j.unfilled)}</span>
                       </div>
                     </div>
                   );

@@ -1583,7 +1583,7 @@ export default function Home() {
           <div className="pb-8 pt-6 text-center">
 
             <p className="text-[11px] text-slate-400">
-              人力分析平台 · 内部使用 Workforce Analytics Platform · Internal Use
+              内部使用 · Internal use only
             </p>
 
             <p className="mt-1 text-[10px] text-slate-300">

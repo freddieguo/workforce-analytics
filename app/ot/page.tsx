@@ -44,7 +44,8 @@ function getValue(row: CsvRow, candidates: string[]) {
   return "";
 }
 function getRate(ot: number, work: number) {
-  return work > 0 ? (ot / work) * 100 : 0;
+  const total = work + ot;
+  return total > 0 ? (ot / total) * 100 : 0;
 }
 function rateColor(rate: number) {
   if (rate >= 10) return { bar: "from-rose-400 to-rose-600", text: "text-rose-600", bg: "bg-rose-50" };
@@ -163,7 +164,8 @@ export default function OTPage() {
                 <p className="text-6xl font-bold tracking-tight">{formatPercent(otRate)}</p>
                 <div className="pb-2">
                   <p className="text-sm text-orange-100">总体加班率 Overall OT Rate</p>
-                  <p className="mt-1 text-xs text-orange-200">{formatDecimal(totalOt)} / {formatDecimal(totalWork)} 小时</p>
+                  <p className="mt-1 text-xs text-orange-200">{formatDecimal(totalOt)} / {formatDecimal(totalHours)} 小时 hours</p>
+                  <p className="mt-1 text-xs text-orange-200/70">数据来源：考勤记录 Source: Attendance Records</p>
                 </div>
               </div>
               <div className="mt-6 grid max-w-3xl grid-cols-2 gap-4 md:grid-cols-4">
@@ -218,7 +220,7 @@ export default function OTPage() {
           {/* Daily trend */}
           <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
             <h3 className="text-lg font-bold">每日加班趋势 Daily OT Trend</h3>
-            <p className="mt-1 text-xs text-slate-400">数据来源：考勤表 Source: Attendance Records</p>
+            <p className="mt-1 text-xs text-slate-400">数据来源：考勤记录 Source: Attendance Records</p>
             {daily.length > 0 ? (
               <div className="mt-6 flex h-[260px] items-end gap-1.5 overflow-x-auto pb-1">
                 {daily.map((d) => {
@@ -246,9 +248,9 @@ export default function OTPage() {
               <p className="py-12 text-center text-sm text-slate-400">暂无数据 No data</p>
             )}
             <div className="mt-4 flex gap-4 text-[11px] text-slate-400">
-              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> 正常 &lt;7%</span>
-              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> 关注 7-10%</span>
-              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> 偏高 ≥10%</span>
+              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> 正常 Normal &lt;7%</span>
+              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> 关注 Watch 7-10%</span>
+              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> 偏高 High ≥10%</span>
             </div>
           </section>
 
@@ -256,24 +258,24 @@ export default function OTPage() {
           <section className="mt-6 grid gap-6 xl:grid-cols-3">
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="font-bold">仓库排名 By Warehouse</h3>
-              <p className="mt-1 text-xs text-slate-400">按加班率排序</p>
+              <p className="mt-1 text-xs text-slate-400">按加班率排序 Rank by OT Rate</p>
               <div className="mt-5"><RankList items={warehouses} unit="小时加班" /></div>
             </div>
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="font-bold">供应商排名 By Supplier</h3>
-              <p className="mt-1 text-xs text-slate-400">按加班率排序</p>
+              <p className="mt-1 text-xs text-slate-400">按加班率排序 Rank by OT Rate</p>
               <div className="mt-5"><RankList items={suppliers} unit="小时加班" /></div>
             </div>
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="font-bold">工种排名 By Job</h3>
-              <p className="mt-1 text-xs text-slate-400">按加班时长排序</p>
+              <p className="mt-1 text-xs text-slate-400">按加班时长排序 Rank by OT Hours</p>
               <div className="mt-5"><RankList items={jobs} unit="小时加班" by="hours" /></div>
             </div>
           </section>
 
           <div className="pb-8 pt-6 text-center">
             <Link href="/" className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">← 返回总览 Back to Overview</Link>
-            <p className="mt-3 text-[11px] text-slate-400">加班率 = 加班时长 ÷ 工作时长 · OT Rate = OT Hours ÷ Work Hours</p>
+            <p className="mt-3 text-[11px] text-slate-400">加班率 = 加班时长 ÷ 时长总计 · OT Rate = OT Hours ÷ Total Hours</p>
           </div>
         </div>
       </main>

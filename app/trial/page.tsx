@@ -108,7 +108,7 @@ export default function TrialFailurePage() {
           <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-600 via-rose-700 to-red-800 p-8 text-white shadow-xl">
             <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
             <div className="relative">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-200">试工不通过集中在哪里？ Where are failures concentrated?</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-200">试工不通过集中在哪里？ Where are trial failures concentrated?</p>
               <div className="mt-4 flex items-end gap-6">
                 <p className="text-6xl font-bold tracking-tight">{formatNumber(total)}</p>
                 <div className="pb-2">
@@ -193,17 +193,17 @@ export default function TrialFailurePage() {
           <section className="mt-6 grid gap-6 xl:grid-cols-3">
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="font-bold">供应商排名 By Supplier</h3>
-              <p className="mt-1 text-xs text-slate-400">按不通过人数排序</p>
+              <p className="mt-1 text-xs text-slate-400">按不通过人数排序 Rank by Failure Count</p>
               <div className="mt-5"><RankList items={suppliers} /></div>
             </div>
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="font-bold">仓库排名 By Warehouse</h3>
-              <p className="mt-1 text-xs text-slate-400">按不通过人数排序</p>
+              <p className="mt-1 text-xs text-slate-400">按不通过人数排序 Rank by Failure Count</p>
               <div className="mt-5"><RankList items={warehouses} /></div>
             </div>
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="font-bold">工种排名 By Job</h3>
-              <p className="mt-1 text-xs text-slate-400">按不通过人数排序</p>
+              <p className="mt-1 text-xs text-slate-400">按不通过人数排序 Rank by Failure Count</p>
               <div className="mt-5"><RankList items={jobs} /></div>
             </div>
           </section>
