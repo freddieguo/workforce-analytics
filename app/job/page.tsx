@@ -150,7 +150,7 @@ export default function JobPage() {
                 {jobs.length} 个工种
               </h2>
               <p className="mt-1 text-sm font-medium text-violet-200">
-                {jobs.length} jobs · Overall fulfillment rate {formatPercent(overallFulfillment)}
+                {jobs.length} jobs
               </p>
               <p className="mt-3 text-sm leading-6 text-violet-100">
                 {formatNumber(totalAccepted)} / {formatNumber(totalDemand)} 人次最终被接受，
