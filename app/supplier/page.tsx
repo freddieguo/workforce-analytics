@@ -90,7 +90,7 @@ export default function SupplierPage() {
             <div className="relative">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-200">供应商表现 Supplier Performance</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">
-                {suppliers.length} 家供应商 · 总体达成率 {formatPercent(overallRate)}
+                {suppliers.length} 家供应商 · 总体派遣率 {formatPercent(overallRate)}
               </h2>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-indigo-100">
                 {formatNumber(totalFilled)} / {formatNumber(totalRequested)} 人次已派遣。
@@ -108,7 +108,7 @@ export default function SupplierPage() {
                 </div>
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
                   <p className="text-2xl font-bold">{formatPercent(overallRate)}</p>
-                  <p className="mt-1 text-xs text-indigo-200">达成率<br />Fill Rate</p>
+                  <p className="mt-1 text-xs text-indigo-200">派遣率<br />Dispatch Rate</p>
                 </div>
               </div>
             </div>
@@ -147,7 +147,7 @@ export default function SupplierPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold">供应商排名 Supplier Ranking</h3>
-                <p className="mt-1 text-xs text-slate-400">按达成率排序 · 数据来源：用工需求池（发单详情） Source: Labor Demand Pool</p>
+                <p className="mt-1 text-xs text-slate-400">按派遣率排序 · 数据来源：用工需求池（发单详情） Source: Labor Demand Pool</p>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">{suppliers.length} 家</span>
             </div>
@@ -196,7 +196,7 @@ export default function SupplierPage() {
           {/* Footer */}
           <div className="pb-8 pt-6 text-center">
             <Link href="/" className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">← 返回总览 Back to Overview</Link>
-            <p className="mt-3 text-[11px] text-slate-400">达成率 = 已派遣 ÷ 已发单 · Fill rate = dispatched ÷ issued</p>
+            <p className="mt-3 text-[11px] text-slate-400">派遣率 = 已派遣 ÷ 已发单 · Dispatch rate = dispatched ÷ issued</p>
           </div>
         </div>
       </main>

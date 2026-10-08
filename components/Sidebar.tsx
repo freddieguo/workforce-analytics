@@ -130,6 +130,11 @@ const navigation = [
     icon: "warehouse" as SidebarIconType,
   },
   {
+    name: "工种分析 Job Analysis",
+    href: "/job",
+    icon: "data" as SidebarIconType,
+  },  
+  {
     name: "加班分析 OT Analysis",
     href: "/ot",
     icon: "ot" as SidebarIconType,

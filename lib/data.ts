@@ -324,6 +324,9 @@ export function getDashboardData() {
       matchWarehouseArrival: getDataset(dashboard, "match_warehouse_arrival"),
       warehouseAllocSummary: getDataset(dashboard, "warehouse_alloc_summary"),
 
+      jobAllocSummary: getDataset(dashboard, "job_alloc_summary")
+
+
   };
 }
 

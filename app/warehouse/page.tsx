@@ -52,15 +52,15 @@ export default function WarehousePage() {
       return { name, requested, filled, unfilled, fillRate };
     })
     .filter((w) => w.name !== "未分类")
-    .sort((a, b) => b.fillRate - a.fillRate);
+    .sort((a, b) => a.fillRate - b.fillRate);
 
   const totalRequested = warehouses.reduce((s, x) => s + x.requested, 0);
   const totalFilled = warehouses.reduce((s, x) => s + x.filled, 0);
   const totalUnfilled = warehouses.reduce((s, x) => s + x.unfilled, 0);
   const overallRate = totalRequested > 0 ? (totalFilled / totalRequested) * 100 : 0;
 
-  const best = warehouses[0] ?? null;
-  const worst = [...warehouses].sort((a, b) => a.fillRate - b.fillRate)[0] ?? null;
+  const best = [...warehouses].sort((a, b) => b.fillRate - a.fillRate)[0] ?? null;
+  const worst = warehouses[0] ?? null;
   const largestGap = [...warehouses].sort((a, b) => b.unfilled - a.unfilled)[0] ?? null;
 
   const demandDates = (demand as CsvRow[]).map((r) => getValue(r, ["需求日期", "日期"])).filter(Boolean).sort();
@@ -152,7 +152,7 @@ export default function WarehousePage() {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold">仓库排名 Warehouse Ranking</h3>
-                <p className="mt-1 text-xs text-slate-400">按派遣率排序 · 数据来源：用工需求池（发单详情） Source: Labor Demand Pool</p>
+                <p className="mt-1 text-xs text-slate-400">按派遣率从低到高排序 · 数据来源：用工需求池（发单详情） Source: Labor Demand Pool</p>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">{warehouses.length} 个</span>
             </div>

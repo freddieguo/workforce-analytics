@@ -72,6 +72,7 @@ export default function OTPage() {
 
   const totalWork = daily.reduce((s, r) => s + r.workHours, 0);
   const totalOt = daily.reduce((s, r) => s + r.otHours, 0);
+  const totalHours = totalWork + totalOt;
   const otRate = getRate(totalOt, totalWork);
   const rc = rateColor(otRate);
 
@@ -165,7 +166,7 @@ export default function OTPage() {
                   <p className="mt-1 text-xs text-orange-200">{formatDecimal(totalOt)} / {formatDecimal(totalWork)} 小时</p>
                 </div>
               </div>
-              <div className="mt-6 grid max-w-2xl grid-cols-3 gap-4">
+              <div className="mt-6 grid max-w-3xl grid-cols-2 gap-4 md:grid-cols-4">
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
                   <p className="text-xl font-bold">{formatDecimal(totalOt)}</p>
                   <p className="mt-1 text-xs text-orange-200">加班时长<br />OT Hours</p>
@@ -173,6 +174,10 @@ export default function OTPage() {
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
                   <p className="text-xl font-bold">{formatDecimal(totalWork)}</p>
                   <p className="mt-1 text-xs text-orange-200">工作时长<br />Work Hours</p>
+                </div>
+                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
+                  <p className="text-xl font-bold">{formatDecimal(totalHours)}</p>
+                  <p className="mt-1 text-xs text-orange-200">时长总计<br />Total Hours</p>
                 </div>
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
                   <p className="text-xl font-bold">{daily.length}</p>
