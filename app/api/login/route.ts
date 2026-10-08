@@ -18,7 +18,8 @@ export async function POST(request: Request) {
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: 60 * 60 * 4, // 一个登录有4小时的权限
+      // 不设 maxAge：会话级 cookie，关闭浏览器即失效
+      // maxAge: 60 * 60 * 4, // 一个登录有4小时的权限
     });
     return res;
   }
