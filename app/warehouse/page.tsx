@@ -167,10 +167,10 @@ export default function WarehousePage() {
             <div className="relative">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal-200">仓库表现 Warehouse Performance</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">
-                {warehouses.length} 个仓库 · 总体达成率 {formatPercent(overallFulfillment)}
+                {warehouses.length} 个仓库
               </h2>
               <p className="mt-1 text-sm font-medium text-teal-200">
-                {warehouses.length} warehouses · Overall fulfillment rate {formatPercent(overallFulfillment)}
+                {warehouses.length} warehouses
               </p>
               <p className="mt-3 text-sm leading-6 text-teal-100">
                 {formatNumber(totalAccepted)} / {formatNumber(totalRequested)} 人次最终被接受，

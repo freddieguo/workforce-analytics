@@ -141,10 +141,10 @@ export default function SupplierPage() {
             <div className="relative">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-200">供应商表现 Supplier Performance</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">
-                {suppliers.length} 家供应商 · 总体达成率 {formatPercent(overallFulfillment)}
+                {suppliers.length} 家供应商
               </h2>
               <p className="mt-1 text-sm font-medium text-indigo-200">
-                {suppliers.length} suppliers · Overall fulfillment rate {formatPercent(overallFulfillment)}
+                {suppliers.length} suppliers
               </p>
               <p className="mt-3 text-sm leading-6 text-indigo-100">
                 {formatNumber(totalAccepted)} / {formatNumber(totalRequested)} 人次最终被接受。

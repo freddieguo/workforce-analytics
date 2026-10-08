@@ -106,10 +106,10 @@ export default function JobPage() {
             <div className="relative">
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-200">工种到岗与接受 Job Arrival & Acceptance</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">
-                {jobs.length} 个工种 · 总体达成率 {formatPercent(overallFulfillment)}
+                {jobs.length} 个工种
               </h2>
               <p className="mt-1 text-sm font-medium text-violet-200">
-                {jobs.length} jobs · Overall fulfillment rate {formatPercent(overallFulfillment)}
+                {jobs.length} jobs
               </p>
               <p className="mt-3 text-sm leading-6 text-violet-100">
                 {formatNumber(totalAccepted)} / {formatNumber(totalPlanned)} 人次最终被接受，
