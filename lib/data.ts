@@ -320,7 +320,9 @@ export function getDashboardData() {
       arrivalTrackingDaily: getDataset(dashboard, "arrival_tracking_daily"),
       arrivalTrackingSupplier: getDataset(dashboard, "arrival_tracking_supplier"),
 
-
+      matchSupplierArrival: getDataset(dashboard, "match_supplier_arrival"),
+      matchWarehouseArrival: getDataset(dashboard, "match_warehouse_arrival"),
+      warehouseAllocSummary: getDataset(dashboard, "warehouse_alloc_summary"),
 
   };
 }

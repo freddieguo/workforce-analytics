@@ -180,6 +180,29 @@ def build_supplier_warehouse(alloc_rows):
     return SUPPLIER_WAREHOUSE_COLUMNS, out
 
 
+WAREHOUSE_ALLOC_COLUMNS = ["仓库", "需求人数", "已派遣人数", "未派遣人数"]
+
+
+def build_warehouse_alloc_summary(alloc_rows):
+    """发单详情按需求仓汇总：需求人数=已发单，已派遣人数=已派遣"""
+    agg = defaultdict(lambda: {"需求人数": 0, "已派遣人数": 0})
+    for r in alloc_rows:
+        wh = r["需求仓"] or "未分类"
+        a = agg[wh]
+        a["需求人数"] += r["供应商需派遣人数"]
+        a["已派遣人数"] += r["供应商已派遣人数"]
+    out = []
+    for wh, v in agg.items():
+        out.append({
+            "仓库": wh,
+            "需求人数": v["需求人数"],
+            "已派遣人数": v["已派遣人数"],
+            "未派遣人数": max(v["需求人数"] - v["已派遣人数"], 0),
+        })
+    out.sort(key=lambda r: -r["需求人数"])
+    return WAREHOUSE_ALLOC_COLUMNS, out
+
+
 SUPPLIER_JOB_COLUMNS = ["供应商", "工种", "原始工种", "需求人数", "已派遣人数"]
 
 
@@ -593,6 +616,150 @@ ARRIVAL_TRACKING_EMPTY_SCHEMAS = {
 
 
 # ------------------------------------------------------------------
+# 派遣表现：派遣名单（应派）× 到岗表（实到）
+# ------------------------------------------------------------------
+# 口径（2026-10-07 用户定）：
+#   应派 = 派遣人员名单按供应商/仓库求和「供应商需派遣人数」
+#   实到 = 人员到岗表按机构/仓库计数（有 OTWS ID 的记录）
+#   达成率 = 实到 ÷ 应派
+# 仓库名归一化：到岗表用英文名（如 Los Angeles-8），派遣名单用中文名
+# （如 洛杉矶8号仓），按编号+后缀映射；(CP)=中邮 特殊处理。
+
+import re as _re
+
+def _norm_wh_at(name):
+    m = _re.search(r'(\d+)', name or "")
+    if not m:
+        return name
+    num = m.group(1)
+    pm = _re.search(r'\(([^)]+)\)', name or "")
+    suffix = pm.group(1) if pm else ""
+    if suffix == "CP":
+        suffix = "中邮"
+    s = f"洛杉矶{num}号仓"
+    if suffix:
+        s += f"({suffix})"
+    return s
+
+
+DISPATCH_SUPPLIER_PERF_COLUMNS = ["供应商", "应派人数", "实到人次", "达成率"]
+DISPATCH_WAREHOUSE_PERF_COLUMNS = ["仓库", "应派人数", "实到人次", "达成率"]
+
+
+def build_dispatch_performance(dispatch_rows, at_rows):
+    """派遣名单 × 到岗表 -> 供应商/仓库表现（实到÷应派）"""
+    # 应派：派遣名单按供应商、仓库求和
+    sup_need = defaultdict(int)
+    wh_need = defaultdict(int)
+    for r in dispatch_rows:
+        sup = r.get("供应商") or "未分类"
+        wh = r.get("需求仓") or "未分类"
+        n = r.get("供应商需派遣人数") or 0
+        sup_need[sup] += n
+        wh_need[wh] += n
+    # 实到：到岗表按机构、归一化仓库计数
+    sup_arr = defaultdict(int)
+    wh_arr = defaultdict(int)
+    for r in at_rows:
+        sup = r.get("机构") or "未分类"
+        wh = _norm_wh_at(r.get("仓库") or "未分类")
+        sup_arr[sup] += 1
+        wh_arr[wh] += 1
+    sup_rows = []
+    for sup in sorted(set(sup_need) | set(sup_arr)):
+        need = sup_need.get(sup, 0)
+        arr = sup_arr.get(sup, 0)
+        rate = round(arr / need * 100, 1) if need > 0 else 0
+        sup_rows.append({"供应商": sup, "应派人数": need,
+                        "实到人次": arr, "达成率": rate})
+    sup_rows.sort(key=lambda r: -r["达成率"])
+    wh_rows = []
+    for wh in sorted(set(wh_need) | set(wh_arr)):
+        need = wh_need.get(wh, 0)
+        arr = wh_arr.get(wh, 0)
+        rate = round(arr / need * 100, 1) if need > 0 else 0
+        wh_rows.append({"仓库": wh, "应派人数": need,
+                       "实到人次": arr, "达成率": rate})
+    wh_rows.sort(key=lambda r: -r["达成率"])
+    return {
+        "dispatch_supplier_perf": (
+            DISPATCH_SUPPLIER_PERF_COLUMNS, sup_rows),
+        "dispatch_warehouse_perf": (
+            DISPATCH_WAREHOUSE_PERF_COLUMNS, wh_rows),
+    }
+
+
+DISPATCH_PERF_EMPTY_SCHEMAS = {
+    "dispatch_supplier_perf": DISPATCH_SUPPLIER_PERF_COLUMNS,
+    "dispatch_warehouse_perf": DISPATCH_WAREHOUSE_PERF_COLUMNS,
+}
+
+
+# ------------------------------------------------------------------
+# 到岗匹配：发单详情（已派遣）× 到岗表（实到）
+# ------------------------------------------------------------------
+# 口径（2026-10-07 用户定）：
+#   已派遣 = 发单详情按供应商/需求仓求和「供应商已派遣人数」
+#   实到   = 人员到岗表按机构/仓库计数（有 OTWS ID 的记录）
+#   到岗率 = 实到 ÷ 已派遣
+# 超过 100% 说明到岗表的人比发单记的多（临时加人/名单延迟）；
+# 过低说明派了没到得多。
+
+MATCH_SUPPLIER_COLUMNS = ["供应商", "已派遣", "实到", "到岗率"]
+MATCH_WAREHOUSE_COLUMNS = ["仓库", "已派遣", "实到", "到岗率"]
+
+
+def build_arrival_match(alloc_rows, at_rows):
+    """发单详情 × 到岗表 -> 供应商/仓库到岗率"""
+    from collections import defaultdict
+    # 已派遣：发单详情
+    sup_disp = defaultdict(int)
+    wh_disp = defaultdict(int)
+    for r in alloc_rows:
+        sup = r.get("供应商") or "未分类"
+        wh = r.get("需求仓") or "未分类"
+        n = r.get("供应商已派遣人数") or 0
+        sup_disp[sup] += n
+        wh_disp[wh] += n
+    # 实到：到岗表（排除 NoShow 才是实际到场）
+    sup_arr = defaultdict(int)
+    wh_arr = defaultdict(int)
+    for r in at_rows:
+        if r.get("是否NoShow"):
+            continue
+        sup = r.get("机构") or "未分类"
+        wh = _norm_wh_at(r.get("仓库") or "未分类")
+        sup_arr[sup] += 1
+        wh_arr[wh] += 1
+    sup_rows = []
+    for sup in sorted(set(sup_disp) | set(sup_arr)):
+        d = sup_disp.get(sup, 0)
+        a = sup_arr.get(sup, 0)
+        rate = round(a / d * 100, 1) if d > 0 else None
+        sup_rows.append({"供应商": sup, "已派遣": d,
+                        "实到": a, "到岗率": rate})
+    sup_rows.sort(key=lambda r: (r["到岗率"] is None, r["到岗率"] or 0))
+    wh_rows = []
+    for wh in sorted(set(wh_disp) | set(wh_arr)):
+        d = wh_disp.get(wh, 0)
+        a = wh_arr.get(wh, 0)
+        rate = round(a / d * 100, 1) if d > 0 else None
+        wh_rows.append({"仓库": wh, "已派遣": d,
+                       "实到": a, "到岗率": rate})
+    wh_rows.sort(key=lambda r: (r["到岗率"] is None, r["到岗率"] or 0))
+    return {
+        "match_supplier_arrival": (MATCH_SUPPLIER_COLUMNS, sup_rows),
+        "match_warehouse_arrival": (MATCH_WAREHOUSE_COLUMNS, wh_rows),
+    }
+
+
+MATCH_EMPTY_SCHEMAS = {
+    "match_supplier_arrival": MATCH_SUPPLIER_COLUMNS,
+    "match_warehouse_arrival": MATCH_WAREHOUSE_COLUMNS,
+}
+
+
+# ------------------------------------------------------------------
 # 空数据集
 # ------------------------------------------------------------------
 
@@ -644,6 +811,7 @@ def build_all(raw):
         "supplier_warehouse": build_supplier_warehouse(alloc_rows),
         "supplier_job": build_supplier_job(alloc_rows),
         "warehouse_summary": build_warehouse_summary(demand_rows, alloc_rows),
+        "warehouse_alloc_summary": build_warehouse_alloc_summary(alloc_rows),
         "warehouse_job": build_warehouse_job(demand_rows),
         "dispatch": build_dispatch(raw),
     }
@@ -669,5 +837,10 @@ def build_all(raw):
         datasets.update(build_arrival_tracking(at_rows))
     else:
         for name, columns in ARRIVAL_TRACKING_EMPTY_SCHEMAS.items():
+            datasets[name] = empty_dataset(columns)
+    if alloc_rows and at_rows:
+        datasets.update(build_arrival_match(alloc_rows, at_rows))
+    else:
+        for name, columns in MATCH_EMPTY_SCHEMAS.items():
             datasets[name] = empty_dataset(columns)
     return datasets

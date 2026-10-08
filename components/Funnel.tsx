@@ -119,7 +119,7 @@ const STAGE_META: Record<
     en: "ACCEPTED",
     unit: "people",
     plain:
-      "应到岗 − No Show − 被退回，剩下的就是已接受（人次）。",
+      "应到岗 − 没来 − 被退回，剩下的就是已接受（人次）。",
   },
 };
 
@@ -357,7 +357,7 @@ export default function Funnel({
           <div className="mt-3 grid shrink-0 gap-3 md:grid-cols-2">
             {[
               {
-                zh: "No Show",
+                zh: "没来",
                 en: "NO-SHOW",
                 value: noShowPending,
                 plain:
@@ -389,11 +389,11 @@ export default function Funnel({
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-orange-900">
                     {b.zh} {b.en}
-                    <span className="ml-1.5 rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-700">
-                      {b.value !== null
-                        ? "待核实 Pending"
-                        : "待数据 Pending"}
-                    </span>
+                    {b.value === null && (
+                      <span className="ml-1.5 rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-700">
+                        待数据 Pending
+                      </span>
+                    )}
                   </p>
                   <p className="mt-0.5 text-[11px] leading-4 text-orange-800/70">
                     {b.plain}
@@ -624,7 +624,7 @@ export default function Funnel({
                   </div>
                   <div>
                     <p className="text-xs text-slate-500">
-                      No Show 没来
+                      没来 No Show
                     </p>
                     <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
                       {formatNumber(
@@ -762,7 +762,7 @@ export default function Funnel({
                   </div>
                   <div>
                     <p className="text-xs text-slate-500">
-                      No Show 没来
+                      没来 No Show
                     </p>
                     <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
                       {formatNumber(
@@ -829,12 +829,12 @@ export default function Funnel({
                 : "N/A",
             formula:
               issued !== null
-                ? `${formatNumber(
+                ? `已派遣 ÷ 已发单 = ${formatNumber(
                     dispatched
                   )} ÷ ${formatNumber(
                     issued
                   )}`
-                : "D ÷ I",
+                : "已派遣 ÷ 已发单",
             plain:
               issued !== null && issued > 0
                 ? `每 100 个已发单人次，约 ${Math.round(
@@ -861,29 +861,29 @@ export default function Funnel({
             formula:
               accepted !== null &&
               arrived !== null
-                ? `${formatNumber(
+                ? `已接受 ÷ 应到岗 = ${formatNumber(
                     accepted
                   )} ÷ ${formatNumber(
                     arrived
                   )}`
-                : "K ÷ A",
+                : "已接受 ÷ 应到岗",
             plain:
               accepted !== null &&
               arrived !== null
-                ? `每 100 个到岗的人，约 ${Math.round(
+                ? `每 100 个应到岗的人，约 ${Math.round(
                     arrived > 0
                       ? (accepted / arrived) *
                           100
                       : 0
-                  )} 人被接受。`
+                  )} 人最终上岗。`
                 : "待数据：分子需要已接受的人数。",
             ok:
               accepted !== null &&
               arrived !== null,
           },
           {
-            zh: "实际达成率",
-            en: "Actual Fulfillment",
+            zh: "需求满足率",
+            en: "Demand Fulfillment",
             value:
               accepted !== null &&
               requested > 0
@@ -894,19 +894,19 @@ export default function Funnel({
                 : "N/A",
             formula:
               accepted !== null
-                ? `${formatNumber(
+                ? `已接受 ÷ 需求 = ${formatNumber(
                     accepted
                   )} ÷ ${formatNumber(
                     requested
                   )}`
-                : "K ÷ R",
+                : "已接受 ÷ 需求",
             plain:
               accepted !== null &&
               requested > 0
                 ? `每 100 个需求名额，最终约 ${Math.round(
                     (accepted / requested) *
                       100
-                  )} 人被接受上岗。`
+                  )} 人上岗。`
                 : "待数据：分子需要已接受的人数。",
             ok: accepted !== null,
           },
@@ -937,12 +937,12 @@ export default function Funnel({
         ))}
       </div>
 
-      <p className="mt-4 text-center text-[11px] leading-5 text-slate-400">
-        口径遵循：比率由分子分母加总计算，不对百分比取平均；超发不截断如实展示。
+      {/* <p className="mt-4 text-center text-[11px] leading-5 text-slate-400">
+       口径遵循：比率由分子分母加总计算，不对百分比取平均；超发不截断如实展示。
         Rates are aggregated from summed numerators and denominators,
         never averaged; over-issue shown
         as-is.
-      </p>
+      </p> */}
 
     </div>
   );
