@@ -203,6 +203,20 @@ def build_warehouse_alloc_summary(alloc_rows):
     return WAREHOUSE_ALLOC_COLUMNS, out
 
 
+JOB_DEMAND_COLUMNS = ["工种", "需求人数"]
+
+
+def build_job_demand_summary(demand_rows):
+    """需求池按工种汇总需求人数"""
+    agg = defaultdict(int)
+    for r in demand_rows:
+        job = r["工种"] or "未分类"
+        agg[job] += r["需求人数"] or 0
+    out = [{"工种": job, "需求人数": v} for job, v in agg.items()]
+    out.sort(key=lambda r: -r["需求人数"])
+    return JOB_DEMAND_COLUMNS, out
+
+
 JOB_ALLOC_COLUMNS = ["工种", "需求人数", "已派遣人数", "未派遣人数"]
 
 
@@ -849,6 +863,7 @@ def build_all(raw):
         "warehouse_summary": build_warehouse_summary(demand_rows, alloc_rows),
         "warehouse_alloc_summary": build_warehouse_alloc_summary(alloc_rows),
         "job_alloc_summary": build_job_alloc_summary(alloc_rows),
+        "job_demand_summary": build_job_demand_summary(demand_rows),
         "warehouse_job": build_warehouse_job(demand_rows),
         "dispatch": build_dispatch(raw),
     }

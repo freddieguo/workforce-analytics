@@ -36,44 +36,85 @@ function getValue(row: CsvRow, candidates: string[]) {
   return "";
 }
 
+/* 到岗职位名 → 需求/发单工种名聚合：Bendi I/II→Bendi，General Labor→普工，Janitor→保洁员 */
+function normalizeJobKey(name: string): string {
+  const n = name.trim();
+  if (n === "General Labor" || n === "General Labor-") return "普工";
+  if (n === "Janitor") return "保洁员";
+  let base = n.replace(/\s+[IVX]+\.?$/, "").trim().replace(/-+$/, "").trim();
+  base = base.replace(/^Sr\s+/, "Sr. ");
+  if (base === "Sr. Warehouse Associate") return "Sr. Warehouse Associate (P1)";
+  return base;
+}
+
 type JobRow = {
   name: string;
-  planned: number;
-  arrived: number;
-  accepted: number;
-  noshow: number;
-  rejected: number;
-  fulfillmentRate: number;
+  demand: number;
+  issued: number | null;
+  filled: number | null;
+  arrived: number | null;
+  accepted: number | null;
+  fulfillmentRate: number | null;
 };
 
 export default function JobPage() {
-  const { demand, arrivalTrackingJob } = getDashboardData();
+  const { demand, jobDemandSummary, jobAllocSummary, arrivalTrackingJob } = getDashboardData();
 
-  // 直接用人员到岗表按职位汇总，不跟发单详情硬拼
-  const jobs: JobRow[] = ((arrivalTrackingJob ?? []) as CsvRow[])
+  // 发单详情按工种：已发单、已派遣
+  const allocMap = new Map<string, { issued: number; filled: number }>(
+    (((jobAllocSummary ?? []) as CsvRow[]).map((r: CsvRow) => [
+      getValue(r, ["工种"]) || "未分类",
+      {
+        issued: numberValue(getValue(r, ["需求人数"])),
+        filled: numberValue(getValue(r, ["已派遣人数"])),
+      },
+    ]) as [string, { issued: number; filled: number }][])
+  );
+
+  // 到岗表按工种聚合：实际到场、已接受
+  const atJobMap = new Map<string, { arrived: number; accepted: number }>();
+  for (const r of ((arrivalTrackingJob ?? []) as CsvRow[])) {
+    const key = normalizeJobKey(getValue(r, ["工种"]) || "");
+    if (!key || key === "未分类") continue;
+    const total = numberValue(getValue(r, ["到岗人次"]));
+    const noshow = numberValue(getValue(r, ["NoShow人次"]));
+    const accepted = numberValue(getValue(r, ["已接受人次"]));
+    const e = atJobMap.get(key) ?? { arrived: 0, accepted: 0 };
+    e.arrived += total - noshow;
+    e.accepted += accepted;
+    atJobMap.set(key, e);
+  }
+
+  // 以需求池工种为主
+  const jobs: JobRow[] = ((jobDemandSummary ?? []) as CsvRow[])
     .map((row) => {
       const name = getValue(row, ["工种"]) || "未分类";
-      const planned = numberValue(getValue(row, ["拟到岗人次"]));
-      const total = numberValue(getValue(row, ["到岗人次"]));
-      const noshow = numberValue(getValue(row, ["NoShow人次"]));
-      const rejected = numberValue(getValue(row, ["被退回人次"]));
-      const accepted = numberValue(getValue(row, ["已接受人次"]));
-      const arrived = total - noshow;
-      const fulfillmentRate = planned > 0 ? (accepted / planned) * 100 : 0;
-      return { name, planned, arrived, accepted, noshow, rejected, fulfillmentRate };
+      const demandCount = numberValue(getValue(row, ["需求人数"]));
+      const alloc = allocMap.get(name);
+      const at = atJobMap.get(name);
+      const accepted = at?.accepted ?? null;
+      return {
+        name,
+        demand: demandCount,
+        issued: alloc?.issued ?? null,
+        filled: alloc?.filled ?? null,
+        arrived: at?.arrived ?? null,
+        accepted,
+        fulfillmentRate: accepted !== null && demandCount > 0 ? (accepted / demandCount) * 100 : null,
+      };
     })
     .filter((j) => j.name !== "未分类")
-    .sort((a, b) => a.fulfillmentRate - b.fulfillmentRate);
+    .sort((a, b) => b.demand - a.demand);
 
-  const totalPlanned = jobs.reduce((s, x) => s + x.planned, 0);
-  const totalArrived = jobs.reduce((s, x) => s + x.arrived, 0);
-  const totalAccepted = jobs.reduce((s, x) => s + x.accepted, 0);
-  const totalRejected = jobs.reduce((s, x) => s + x.rejected, 0);
-  const overallFulfillment = totalPlanned > 0 ? (totalAccepted / totalPlanned) * 100 : 0;
+  const totalDemand = jobs.reduce((s, x) => s + x.demand, 0);
+  const totalIssued = jobs.reduce((s, x) => s + (x.issued ?? 0), 0);
+  const totalArrived = jobs.reduce((s, x) => s + (x.arrived ?? 0), 0);
+  const totalAccepted = jobs.reduce((s, x) => s + (x.accepted ?? 0), 0);
+  const overallFulfillment = totalDemand > 0 ? (totalAccepted / totalDemand) * 100 : 0;
 
-  const best = [...jobs].sort((a, b) => b.fulfillmentRate - a.fulfillmentRate)[0] ?? null;
-  const worst = jobs[0] ?? null;
-  const mostRejected = [...jobs].sort((a, b) => b.rejected - a.rejected)[0] ?? null;
+  const mostDemanded = jobs[0] ?? null;
+  const worst = [...jobs].sort((a, b) => (a.fulfillmentRate ?? 999) - (b.fulfillmentRate ?? 999))[0] ?? null;
+  const best = [...jobs].sort((a, b) => (b.fulfillmentRate ?? -1) - (a.fulfillmentRate ?? -1))[0] ?? null;
 
   const demandDates = ((demand ?? []) as CsvRow[]).map((r) => getValue(r, ["需求日期", "日期"])).filter(Boolean).sort();
   const periodLabel = demandDates[0] && demandDates[demandDates.length - 1]
@@ -104,23 +145,27 @@ export default function JobPage() {
             <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
             <div className="pointer-events-none absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-purple-400/20 blur-3xl" />
             <div className="relative">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-200">工种到岗与接受 Job Arrival & Acceptance</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-200">工种需求与达成 Job Demand & Fulfillment</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight">
                 {jobs.length} 个工种
               </h2>
               <p className="mt-1 text-sm font-medium text-violet-200">
-                {jobs.length} jobs
+                {jobs.length} jobs · Overall fulfillment rate {formatPercent(overallFulfillment)}
               </p>
               <p className="mt-3 text-sm leading-6 text-violet-100">
-                {formatNumber(totalAccepted)} / {formatNumber(totalPlanned)} 人次最终被接受，
-                实际到场 {formatNumber(totalArrived)} 人次，被退回 {formatNumber(totalRejected)} 人次。
-                {best && <>达成率最高的是 <strong className="text-white">{best.name}</strong>（{formatPercent(best.fulfillmentRate)}），</>}
-                {mostRejected && <>被退回最多的是 <strong className="text-white">{mostRejected.name}</strong>（{formatNumber(mostRejected.rejected)} 人次）。</>}
+                {formatNumber(totalAccepted)} / {formatNumber(totalDemand)} 人次最终被接受，
+                实际到场 {formatNumber(totalArrived)} 人次。
+                {mostDemanded && <>需求最多的是 <strong className="text-white">{mostDemanded.name}</strong>（{formatNumber(mostDemanded.demand)} 人次），</>}
+                {worst?.fulfillmentRate != null && <>达成率最低的是 <strong className="text-white">{worst.name}</strong>（{formatPercent(worst.fulfillmentRate)}）。</>}
               </p>
               <div className="mt-6 grid max-w-3xl grid-cols-2 gap-4 md:grid-cols-4">
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalPlanned)}</p>
-                  <p className="mt-1 text-xs text-violet-200">拟到岗<br />Planned</p>
+                  <p className="text-2xl font-bold">{formatNumber(totalDemand)}</p>
+                  <p className="mt-1 text-xs text-violet-200">总需求<br />Demand</p>
+                </div>
+                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
+                  <p className="text-2xl font-bold">{formatNumber(totalIssued)}</p>
+                  <p className="mt-1 text-xs text-violet-200">已发单<br />Issued</p>
                 </div>
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
                   <p className="text-2xl font-bold">{formatNumber(totalArrived)}</p>
@@ -130,38 +175,34 @@ export default function JobPage() {
                   <p className="text-2xl font-bold">{formatNumber(totalAccepted)}</p>
                   <p className="mt-1 text-xs text-violet-200">已接受<br />Accepted</p>
                 </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalRejected)}</p>
-                  <p className="mt-1 text-xs text-violet-200">被退回<br />Rejected</p>
-                </div>
               </div>
             </div>
           </section>
 
           {/* Spotlight */}
           <section className="mt-6 grid gap-4 md:grid-cols-3">
-            {best && (
+            {mostDemanded && (
               <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">🏆 达成率最高 Best</p>
-                <p className="mt-3 truncate text-lg font-bold">{best.name}</p>
-                <p className="mt-1 text-3xl font-bold text-emerald-600">{formatPercent(best.fulfillmentRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(best.accepted)} / {formatNumber(best.planned)} 已接受 accepted</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">📦 需求最多 Most Demanded</p>
+                <p className="mt-3 truncate text-lg font-bold">{mostDemanded.name}</p>
+                <p className="mt-1 text-3xl font-bold text-emerald-600">{formatNumber(mostDemanded.demand)}</p>
+                <p className="mt-2 text-xs text-slate-500">需求 Demand · 已发单 Issued {formatNumber(mostDemanded.issued ?? 0)}</p>
               </div>
             )}
-            {worst && (
+            {worst?.fulfillmentRate != null && (
               <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-6 shadow-sm">
                 <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">⚠️ 达成率最低 Attention</p>
                 <p className="mt-3 truncate text-lg font-bold">{worst.name}</p>
                 <p className="mt-1 text-3xl font-bold text-rose-600">{formatPercent(worst.fulfillmentRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(worst.accepted)} / {formatNumber(worst.planned)} 已接受 accepted</p>
+                <p className="mt-2 text-xs text-slate-500">{formatNumber(worst.accepted ?? 0)} / {formatNumber(worst.demand)} 已接受 accepted</p>
               </div>
             )}
-            {mostRejected && (
+            {best?.fulfillmentRate != null && (
               <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">📊 被退回最多 Most Rejected</p>
-                <p className="mt-3 truncate text-lg font-bold">{mostRejected.name}</p>
-                <p className="mt-1 text-3xl font-bold text-amber-600">{formatNumber(mostRejected.rejected)}</p>
-                <p className="mt-2 text-xs text-slate-500">被退回 Rejected · 到场 Arrived {formatNumber(mostRejected.arrived)}</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">🏆 达成率最高 Best</p>
+                <p className="mt-3 truncate text-lg font-bold">{best.name}</p>
+                <p className="mt-1 text-3xl font-bold text-amber-600">{formatPercent(best.fulfillmentRate)}</p>
+                <p className="mt-2 text-xs text-slate-500">{formatNumber(best.accepted ?? 0)} / {formatNumber(best.demand)} 已接受 accepted</p>
               </div>
             )}
           </section>
@@ -171,19 +212,19 @@ export default function JobPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold">工种排名 Job Ranking</h3>
-                <p className="mt-1 text-xs text-slate-400">按达成率从低到高排序 Rank by Fulfillment Rate (Low to High) · 数据来源：人员到岗表 Source: Arrival Tracking</p>
+                <p className="mt-1 text-xs text-slate-400">按需求数从多到少排序 Rank by Demand (High to Low) · 数据来源：用工需求池 + 发单详情 + 人员到岗表 Source: Labor Demand Pool + Allocation + Arrival Tracking</p>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">{jobs.length} 个工种 jobs</span>
             </div>
 
             {jobs.length === 0 ? (
               <p className="py-12 text-center text-sm text-slate-400">
-                暂无工种到岗数据，请先跑管线生成 arrival_tracking_job。No job arrival data yet — run the pipeline first.
+                暂无工种数据，请先跑管线生成 job_demand_summary。No job data yet — run the pipeline first.
               </p>
             ) : (
               <div className="mt-6 space-y-5">
                 {jobs.map((j, i) => {
-                  const fr = j.fulfillmentRate;
+                  const fr = j.fulfillmentRate ?? 0;
                   const barColor = fr >= 80 ? "from-emerald-400 to-emerald-600"
                     : fr >= 60 ? "from-amber-400 to-amber-600"
                     : "from-rose-400 to-rose-600";
@@ -199,7 +240,7 @@ export default function JobPage() {
                           <span className="truncate text-sm font-semibold">{j.name}</span>
                         </div>
                         <span className={`ml-4 shrink-0 text-lg font-bold ${textColor}`}>
-                          {formatPercent(fr)}
+                          {j.fulfillmentRate !== null ? formatPercent(j.fulfillmentRate) : "—"}
                         </span>
                       </div>
                       <div className="ml-11 mt-2 h-3 overflow-hidden rounded-full bg-slate-100">
@@ -209,15 +250,25 @@ export default function JobPage() {
                         />
                       </div>
                       <div className="ml-11 mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-400 md:grid-cols-5">
-                        <span>{formatNumber(j.planned)} 拟到岗 Planned</span>
-                        <span>{formatNumber(j.arrived)} 实际到场 Arrived</span>
-                        <span className="font-medium text-emerald-600">
-                          {formatNumber(j.accepted)} 已接受 Accepted
-                        </span>
-                        <span>{formatNumber(j.noshow)} NoShow</span>
-                        <span className="font-medium text-rose-500">
-                          {formatNumber(j.rejected)} 被退回 Rejected
-                        </span>
+                        <span className="font-medium text-slate-600">{formatNumber(j.demand)} 需求 Demand</span>
+                        {j.issued !== null ? (
+                          <span>{formatNumber(j.issued)} 已发单 Issued</span>
+                        ) : (
+                          <span className="text-slate-300">已发单 —</span>
+                        )}
+                        {j.arrived !== null ? (
+                          <span>{formatNumber(j.arrived)} 实际到场 Arrived</span>
+                        ) : (
+                          <span className="text-slate-300">实际到场 —</span>
+                        )}
+                        {j.accepted !== null ? (
+                          <span className="font-medium text-emerald-600">
+                            {formatNumber(j.accepted)} 已接受 Accepted
+                          </span>
+                        ) : (
+                          <span className="text-slate-300">已接受 —</span>
+                        )}
+                        <span className="text-slate-500">达成率 = 已接受 ÷ 需求</span>
                       </div>
                     </div>
                   );
@@ -229,7 +280,7 @@ export default function JobPage() {
           {/* Footer */}
           <div className="pb-8 pt-6 text-center">
             <Link href="/" className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">← 返回总览 Back to Overview</Link>
-            <p className="mt-3 text-[11px] text-slate-400">达成率 = 已接受 ÷ 拟到岗 · Fulfillment rate = accepted ÷ planned</p>
+            <p className="mt-3 text-[11px] text-slate-400">达成率 = 已接受 ÷ 需求 · Fulfillment rate = accepted ÷ demand</p>
           </div>
         </div>
       </main>

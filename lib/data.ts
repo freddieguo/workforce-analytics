@@ -328,6 +328,8 @@ export function getDashboardData() {
 
       arrivalTrackingJob: getDataset(dashboard, "arrival_tracking_job"),
 
+      jobDemandSummary: getDataset(dashboard, "job_demand_summary")
+
 
   };
 }
