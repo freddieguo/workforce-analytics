@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "HR Dashboard",
-  description: "HR 数据看板 HR Dashboard",
+  title: "HRBP Dashboard",
+  description: "HRBP 数据看板 HRBP Dashboard",
   icons: {
     icon: "/logo.jpeg",
   },

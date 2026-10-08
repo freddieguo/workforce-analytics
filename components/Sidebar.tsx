@@ -209,7 +209,7 @@ export default function Sidebar() {
         </div>
         <div>
           <div className="text-[16px] font-extrabold tracking-wide text-white">
-            HRBP <span className="font-semibold text-indigo-300">看板</span>
+            HRBP <span className="font-semibold text-indigo-300">数据看板</span>
           </div>
           <div className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.22em] text-slate-500">
             HRBP Dashboard
