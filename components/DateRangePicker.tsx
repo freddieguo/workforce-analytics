@@ -298,8 +298,8 @@ export default function DateRangePicker({
             </div>
             <p className="mb-3 text-xs text-slate-400">
               {mode === "start"
-                ? "👆 先点开始日期，选完自动跳到选结束日期"
-                : "👆 再点结束日期，选完自动应用"}
+                ? "先点开始日期，选完自动跳到选结束日期"
+                : "再点结束日期，选完自动应用"}
             </p>
 
             {/* 双月历 + 月份切换 */}
