@@ -19,7 +19,7 @@ export async function POST(request: Request) {
       sameSite: "lax",
       path: "/",
       // 不设 maxAge：会话级 cookie，关闭浏览器即失效
-      // maxAge: 60 * 60 * 4, // 一个登录有4小时的权限
+      maxAge: 60 * 60 * 2, // 一个登录有2小时的权限
     });
     return res;
   }
