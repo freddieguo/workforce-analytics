@@ -1,13 +1,10 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
+import DateRangePicker from "@/components/DateRangePicker";
 import { getDashboardData, type CsvRow } from "@/lib/data";
+import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
 
 /* Helpers */
-function numberValue(value: string | undefined) {
-  if (!value) return 0;
-  const n = Number(value.replace(/,/g, "").replace(/%/g, "").trim());
-  return Number.isFinite(n) ? n : 0;
-}
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(Math.round(value));
 }
@@ -59,35 +56,40 @@ function warehouseKey(name: string): string {
   return `${num}|${suffix}`;
 }
 
-export default function WarehousePage() {
-  const { demand, warehouseAllocSummary, warehouseSummary, matchWarehouseArrival, arrivalTrackingWarehouse } = getDashboardData();
+export default async function WarehousePage({ searchParams }: any) {
+  const params = (await searchParams) ?? {};
+  const saved = await getSavedRange();
+  const startParam = typeof params.start === "string" ? params.start : saved.start;
+  const endParam = typeof params.end === "string" ? params.end : saved.end;
 
-  // 用发单详情口径（与首页一致）
-  const whRows = (warehouseAllocSummary ?? []).length > 0 ? warehouseAllocSummary : warehouseSummary;
+  const { allocDailyWarehouse, arrivalTrackingDailyWarehouse } = getDashboardData();
 
-  // 到场率：发单已派遣 × 到岗实到
-  const whMatchMap = new Map<string, { arrived: number; arrivalRate: number | null }>(
-    ((((matchWarehouseArrival ?? []) as CsvRow[]).map((r: CsvRow) => {
-      const v = getValue(r, ["到岗率"]);
-      return [
-        getValue(r, ["仓库"]) || "未分类",
-        {
-          arrived: numberValue(getValue(r, ["实到"])),
-          arrivalRate: v === null || v === undefined || v === "" ? null : Number(v),
-        },
-      ] as [string, { arrived: number; arrivalRate: number | null }];
-    })))
+  // 日期范围：发单日期与到岗日期的并集（两个维度各自按自己的日期算）
+  const allocRows = ((allocDailyWarehouse ?? []) as CsvRow[]);
+  const atRows = ((arrivalTrackingDailyWarehouse ?? []) as CsvRow[]);
+  const { start, end, min, max } = resolveRange(
+    [...allocRows.map((r) => getValue(r, ["日期"])),
+     ...atRows.map((r) => getValue(r, ["日期"]))],
+    startParam,
+    endParam
   );
 
+  // 选定范围内按仓库汇总：发单（已发单/已派遣）+ 到岗（到岗/NoShow/已接受）
+  const allocByWh = new Map<string, Record<string, unknown>>(
+    sumByKey(filterByDateRange(allocRows, start, end), "仓库",
+      ["已发单人数", "已派遣人数", "未派遣人数"])
+      .map((r) => [String(r["仓库"]), r])
+  );
   // 到岗表按仓库：实际到场、已接受（按归一化key匹配中英文仓名）
   const atWhMap = new Map<string, { actualArrived: number; accepted: number }>();
-  for (const r of ((arrivalTrackingWarehouse ?? []) as CsvRow[])) {
-    const total = numberValue(getValue(r, ["到岗人次"]));
-    const noshow = numberValue(getValue(r, ["NoShow人次"]));
-    const accepted = numberValue(getValue(r, ["已接受人次"]));
-    const key = warehouseKey(getValue(r, ["仓库"]) || "");
+  for (const r of sumByKey(filterByDateRange(atRows, start, end), "仓库",
+    ["到岗人次", "NoShow人次", "已接受人次"])) {
+    const key = warehouseKey(String(r["仓库"] ?? ""));
     if (key && !key.startsWith("|")) {
-      atWhMap.set(key, { actualArrived: total - noshow, accepted });
+      atWhMap.set(key, {
+        actualArrived: Number(r["到岗人次"] ?? 0) - Number(r["NoShow人次"] ?? 0),
+        accepted: Number(r["已接受人次"] ?? 0),
+      });
     }
   }
   // 查不到带后缀的key时，回退到只按编号匹配
@@ -96,25 +98,27 @@ export default function WarehousePage() {
     return atWhMap.get(key) ?? atWhMap.get(key.split("|")[0] + "|") ?? null;
   }
 
-  const warehouses: WarehouseRow[] = (whRows as CsvRow[])
-    .map((row) => {
-      const name = getValue(row, ["仓库", "需求仓", "物理仓"]) || "未分类";
-      const requested = numberValue(getValue(row, ["需求人数", "供应商需派遣人数"]));
-      const filled = numberValue(getValue(row, ["已派遣人数", "供应商已派遣人数"]));
+  const warehouses: WarehouseRow[] = [...allocByWh.keys()]
+    .map((name) => {
+      const a = allocByWh.get(name)!;
+      const requested = Number(a["已发单人数"] ?? 0);
+      const filled = Number(a["已派遣人数"] ?? 0);
       const unfilled = Math.max(requested - filled, 0);
       const rate = requested > 0 ? (filled / requested) * 100 : 0;
-      const m = whMatchMap.get(name);
       const at = findAtData(name);
       const actualArrived = at?.actualArrived ?? null;
       const accepted = at?.accepted ?? null;
+      // 到场率 = 实际到场 ÷ 已派遣
+      const arrivalRate = actualArrived !== null && filled > 0
+        ? (actualArrived / filled) * 100 : null;
       return {
         name,
         requested,
         filled,
         unfilled,
         rate,
-        arrived: m?.arrived ?? actualArrived,
-        arrivalRate: m?.arrivalRate ?? null,
+        arrived: actualArrived,
+        arrivalRate,
         accepted,
         acceptanceRate:
           accepted !== null && requested > 0
@@ -130,15 +134,12 @@ export default function WarehousePage() {
   const totalUnfilled = warehouses.reduce((s, x) => s + x.unfilled, 0);
   const totalArrived = warehouses.reduce((s, x) => s + (x.arrived ?? 0), 0);
   const totalAccepted = warehouses.reduce((s, x) => s + (x.accepted ?? 0), 0);
-  const overallFulfillment = totalRequested > 0 ? (totalAccepted / totalRequested) * 100 : 0;
-
   const best = warehouses[0] ?? null;
   const worst = [...warehouses].sort((a, b) => (a.acceptanceRate ?? 999) - (b.acceptanceRate ?? 999))[0] ?? null;
   const largestGap = [...warehouses].sort((a, b) => b.unfilled - a.unfilled)[0] ?? null;
 
-  const demandDates = (demand as CsvRow[]).map((r) => getValue(r, ["需求日期", "日期"])).filter(Boolean).sort();
-  const periodLabel = demandDates[0] && demandDates[demandDates.length - 1]
-    ? `${formatDateLabel(demandDates[0])} — ${formatDateLabel(demandDates[demandDates.length - 1])}`
+  const periodLabel = start && end
+    ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
     : "—";
 
   return (
@@ -152,14 +153,25 @@ export default function WarehousePage() {
               <p className="text-xs font-medium text-slate-400">人力管理 Workforce Management</p>
               <h1 className="mt-0.5 text-xl font-bold tracking-tight">仓库分析 Warehouse Analysis</h1>
             </div>
-            <div className="hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-right sm:block">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">统计周期 Reporting Period</p>
-              <p className="text-sm font-semibold text-slate-700">{periodLabel}</p>
+            <div className="flex items-center gap-3">
+              <div className="hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-right sm:block">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">统计周期 Reporting Period</p>
+                <p className="text-sm font-semibold text-slate-700">{periodLabel}</p>
+              </div>
+              <div className="flex items-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <span className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-xs font-semibold text-emerald-700">已处理数据 Processed Data</span>
+              </div>
             </div>
           </div>
         </header>
 
         <div className="px-5 py-7 md:px-8">
+          {/* 日期筛选 */}
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <DateRangePicker start={start} end={end} min={min} max={max} />
+          </div>
+
           {/* Hero */}
           <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-teal-600 via-teal-700 to-cyan-800 p-8 text-white shadow-xl">
             <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />

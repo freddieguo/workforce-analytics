@@ -1,13 +1,10 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
+import DateRangePicker from "@/components/DateRangePicker";
 import { getDashboardData, type CsvRow } from "@/lib/data";
+import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
 
 /* Helpers */
-function numberValue(value: string | undefined) {
-  if (!value) return 0;
-  const n = Number(value.replace(/,/g, "").replace(/%/g, "").trim());
-  return Number.isFinite(n) ? n : 0;
-}
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(Math.round(value));
 }
@@ -48,51 +45,59 @@ type SupplierRow = {
   fulfillmentRate: number | null;
 };
 
-export default function SupplierPage() {
-  const { demand, supplierSummary, matchSupplierArrival, arrivalTrackingSupplier } = getDashboardData();
+export default async function SupplierPage({ searchParams }: any) {
+  const params = (await searchParams) ?? {};
+  const saved = await getSavedRange();
+  const startParam = typeof params.start === "string" ? params.start : saved.start;
+  const endParam = typeof params.end === "string" ? params.end : saved.end;
 
-  // 到场率：发单已派遣 × 到岗实到
-  const supMatchMap = new Map<string, { arrivalRate: number | null }>(
-    (((matchSupplierArrival ?? []) as CsvRow[]).map((r: CsvRow) => {
-      const v = getValue(r, ["到岗率"]);
-      return [
-        getValue(r, ["供应商"]) || "未分类",
-        { arrivalRate: v === null || v === undefined || v === "" ? null : Number(v) },
-      ] as [string, { arrivalRate: number | null }];
-    }))
+  const { allocDailySupplier, arrivalTrackingDailySupplier } = getDashboardData();
+
+  // 日期范围：发单日期与到岗日期的并集（两个维度各自按自己的日期算）
+  const allocRows = ((allocDailySupplier ?? []) as CsvRow[]);
+  const atRows = ((arrivalTrackingDailySupplier ?? []) as CsvRow[]);
+  const { start, end, min, max } = resolveRange(
+    [...allocRows.map((r) => getValue(r, ["日期"])),
+     ...atRows.map((r) => getValue(r, ["日期"]))],
+    startParam,
+    endParam
   );
 
-  // 到岗表按供应商：实际到场、已接受
-  const atSupMap = new Map<string, { actualArrived: number; accepted: number }>(
-    (((arrivalTrackingSupplier ?? []) as CsvRow[]).map((r: CsvRow) => {
-      const total = numberValue(getValue(r, ["到岗人次"]));
-      const noshow = numberValue(getValue(r, ["NoShow人次"]));
-      const accepted = numberValue(getValue(r, ["已接受人次"]));
-      return [
-        getValue(r, ["供应商"]) || "未分类",
-        { actualArrived: total - noshow, accepted },
-      ] as [string, { actualArrived: number; accepted: number }];
-    }))
+  // 选定范围内按供应商汇总：发单（已发单/已派遣）+ 到岗（到岗/NoShow/已接受）
+  const allocBySup = new Map<string, Record<string, unknown>>(
+    sumByKey(filterByDateRange(allocRows, start, end), "供应商",
+      ["已发单人数", "已派遣人数", "未派遣人数"])
+      .map((r) => [String(r["供应商"]), r])
+  );
+  const atBySup = new Map<string, Record<string, unknown>>(
+    sumByKey(filterByDateRange(atRows, start, end), "供应商",
+      ["到岗人次", "NoShow人次", "已接受人次"])
+      .map((r) => [String(r["供应商"]), r])
   );
 
-  const suppliers: SupplierRow[] = (supplierSummary as CsvRow[])
-    .map((row) => {
-      const name = getValue(row, ["供应商", "供应商名称"]) || "未分类";
-      const requested = numberValue(getValue(row, ["需求人数", "供应商需派遣人数"]));
-      const filled = numberValue(getValue(row, ["已派遣人数", "供应商已派遣人数"]));
+  const suppliers: SupplierRow[] = [...allocBySup.keys()]
+    .map((name) => {
+      const a = allocBySup.get(name)!;
+      const at = atBySup.get(name);
+      const requested = Number(a["已发单人数"] ?? 0);
+      const filled = Number(a["已派遣人数"] ?? 0);
       const unfilled = Math.max(requested - filled, 0);
       const dispatchRate = requested > 0 ? (filled / requested) * 100 : 0;
-      const m = supMatchMap.get(name);
-      const at = atSupMap.get(name);
-      const accepted = at?.accepted ?? null;
+      // 实际到场 = 到岗人次 − NoShow人次；到场率 = 实际到场 ÷ 已派遣
+      const total = at ? Number(at["到岗人次"] ?? 0) : 0;
+      const noshow = at ? Number(at["NoShow人次"] ?? 0) : 0;
+      const actualArrived = at ? total - noshow : null;
+      const accepted = at ? Number(at["已接受人次"] ?? 0) : null;
+      const arrivalRate = actualArrived !== null && filled > 0
+        ? (actualArrived / filled) * 100 : null;
       return {
         name,
         requested,
         filled,
         unfilled,
         dispatchRate,
-        actualArrived: at?.actualArrived ?? null,
-        arrivalRate: m?.arrivalRate ?? null,
+        actualArrived,
+        arrivalRate,
         accepted,
         fulfillmentRate: accepted !== null && requested > 0 ? (accepted / requested) * 100 : null,
       };
@@ -104,15 +109,12 @@ export default function SupplierPage() {
   const totalFilled = suppliers.reduce((s, x) => s + x.filled, 0);
   const totalArrived = suppliers.reduce((s, x) => s + (x.actualArrived ?? 0), 0);
   const totalAccepted = suppliers.reduce((s, x) => s + (x.accepted ?? 0), 0);
-  const overallFulfillment = totalRequested > 0 ? (totalAccepted / totalRequested) * 100 : 0;
-
   const best = suppliers[0] ?? null;
   const worst = [...suppliers].sort((a, b) => (a.fulfillmentRate ?? 999) - (b.fulfillmentRate ?? 999))[0] ?? null;
   const largestGap = [...suppliers].sort((a, b) => b.unfilled - a.unfilled)[0] ?? null;
 
-  const demandDates = (demand as CsvRow[]).map((r) => getValue(r, ["需求日期", "日期"])).filter(Boolean).sort();
-  const periodLabel = demandDates[0] && demandDates[demandDates.length - 1]
-    ? `${formatDateLabel(demandDates[0])} — ${formatDateLabel(demandDates[demandDates.length - 1])}`
+  const periodLabel = start && end
+    ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
     : "—";
 
   return (
@@ -126,14 +128,25 @@ export default function SupplierPage() {
               <p className="text-xs font-medium text-slate-400">人力管理 Workforce Management</p>
               <h1 className="mt-0.5 text-xl font-bold tracking-tight">供应商分析 Supplier Analysis</h1>
             </div>
-            <div className="hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-right sm:block">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">统计周期 Reporting Period</p>
-              <p className="text-sm font-semibold text-slate-700">{periodLabel}</p>
+            <div className="flex items-center gap-3">
+              <div className="hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-right sm:block">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">统计周期 Reporting Period</p>
+                <p className="text-sm font-semibold text-slate-700">{periodLabel}</p>
+              </div>
+              <div className="flex items-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <span className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-xs font-semibold text-emerald-700">已处理数据 Processed Data</span>
+              </div>
             </div>
           </div>
         </header>
 
         <div className="px-5 py-7 md:px-8">
+          {/* 日期筛选 */}
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <DateRangePicker start={start} end={end} min={min} max={max} />
+          </div>
+
           {/* Hero insights */}
           <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-800 p-8 text-white shadow-xl">
             <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
@@ -154,7 +167,7 @@ export default function SupplierPage() {
               <div className="mt-6 grid max-w-3xl grid-cols-2 gap-4 md:grid-cols-4">
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
                   <p className="text-2xl font-bold">{formatNumber(totalRequested)}</p>
-                  <p className="mt-1 text-xs text-indigo-200">已发单<br />Requested</p>
+                  <p className="mt-1 text-xs text-indigo-200">总需求<br />Requested</p>
                 </div>
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
                   <p className="text-2xl font-bold">{formatNumber(totalFilled)}</p>

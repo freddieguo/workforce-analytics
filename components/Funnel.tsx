@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import {
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -15,7 +17,7 @@ import {
  * 口径规则（SOP）：
  *  - 每个比率都展示分子、分母、公式
  *  - 分母为 0 显示 N/A，不编数字
- *  - 超发（已发单 > 需求）如实展示，不截断
+ *  - 发单差异（已发单 − 需求）如实展示，不截断
  *  - 到岗来自考勤表（有数据时显示，无数据时如实显示"待数据"）；
  *    已接受用派遣状态"已确认"做代理口径；未到岗/退回仍待数据
  * ======================================================= */
@@ -59,6 +61,16 @@ export type FunnelData = {
   /** 按到岗人次排的 Top 5 */
   topArrivalWarehouses: ArrivalDatum[];
   topArrivalSuppliers: ArrivalDatum[];
+  /** 管理预警：未满足需求 = 需求 − 已接受 */
+  unfilled?: number | null;
+  /** 管理预警：达成率最低的仓库名 */
+  lowestWarehouseName?: string | null;
+  /** 管理预警：达成率最低的仓库达成率 */
+  lowestWarehouseRate?: number | null;
+  /** 管理预警：达成率最低的供应商名 */
+  lowestSupplierName?: string | null;
+  /** 管理预警：达成率最低的供应商达成率 */
+  lowestSupplierRate?: number | null;
 };
 
 function formatNumber(value: number) {
@@ -129,9 +141,12 @@ export default function Funnel({
   data: FunnelData;
 }) {
   const [selected, setSelected] =
-    useState<StageId>("requested");
+    useState<StageId | null>(null);
   const [mounted, setMounted] =
     useState(false);
+  const [alertsOpen, setAlertsOpen] =
+    useState(false);
+  const alertsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const t = requestAnimationFrame(() =>
@@ -140,6 +155,22 @@ export default function Funnel({
     return () =>
       cancelAnimationFrame(t);
   }, []);
+
+  // 点外面自动收起管理预警
+  useEffect(() => {
+    if (!alertsOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        alertsRef.current &&
+        !alertsRef.current.contains(e.target as Node)
+      ) {
+        setAlertsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () =>
+      document.removeEventListener("mousedown", handler);
+  }, [alertsOpen]);
 
   const {
     requested,
@@ -154,6 +185,11 @@ export default function Funnel({
     pendingConfirm,
     noShowPending,
     sentBack,
+    unfilled,
+    lowestWarehouseName,
+    lowestWarehouseRate,
+    lowestSupplierName,
+    lowestSupplierRate,
   } = data;
 
   const stages: {
@@ -200,7 +236,7 @@ export default function Funnel({
       "linear-gradient(90deg, rgba(5,150,105,0.07), rgba(5,150,105,0.02))",
   };
 
-  const detail = STAGE_META[selected];
+  const detail = selected ? STAGE_META[selected] : null;
 
   // 流失分析：各环节流失人数
   const lossIssued =
@@ -219,23 +255,32 @@ export default function Funnel({
     arrived !== null && accepted !== null
       ? arrived - accepted
       : null;
+  // 流失分析口径（统一）：每一行 = 下一阶段 − 上一阶段。
+  // 正数 = 多了（盈余），负数 = 少了（流失）。
   const losses = [
     {
-      zh: "超发",
-      en: "OVER ISSUED",
+      zh: "发单差异",
+      en: "ISSUANCE GAP",
       value:
         lossIssued !== null
           ? -lossIssued
           : null,
       note: "已发单 − 需求",
       color: "from-violet-400 to-violet-500",
+      isRealLoss: false,
+      flow: "需求→发单",
     },
     {
-      zh: "未派遣",
-      en: "UNDISPATCHED",
-      value: lossDispatch,
-      note: "已发单 − 已派遣",
+      zh: "派遣差异",
+      en: "DISPATCH GAP",
+      value:
+        lossDispatch !== null
+          ? -lossDispatch
+          : null,
+      note: "已派遣 − 已发单",
       color: "from-slate-400 to-slate-500",
+      isRealLoss: true,
+      flow: "发单→派遣",
     },
     {
       zh: "到岗差异",
@@ -246,13 +291,20 @@ export default function Funnel({
           : null,
       note: "到岗 − 已派遣（两份表口径不同）",
       color: "from-sky-400 to-sky-500",
+      isRealLoss: false,
+      flow: "派遣→到岗",
     },
     {
       zh: "未接受",
       en: "NOT ACCEPTED",
-      value: lossAccepted,
-      note: "No Show 281 + 被退回 228",
+      value:
+        lossAccepted !== null
+          ? -lossAccepted
+          : null,
+      note: "没来 + 被退回",
       color: "from-amber-400 to-amber-500",
+      isRealLoss: true,
+      flow: "到岗→接受",
     },
   ].filter((l) => l.value !== null);
   const maxLoss = Math.max(
@@ -261,12 +313,11 @@ export default function Funnel({
       Math.abs(l.value as number)
     )
   );
-  const totalLoss = losses
-    .filter((l) => (l.value as number) > 0)
-    .reduce(
-      (s, l) => s + (l.value as number),
-      0
-    );
+  // 共流失 = -(四项之和) = 需求 − 已接受：四项带符号加起来就是它。
+  const totalLoss = -losses.reduce(
+    (s, l) => s + (l.value as number),
+    0
+  );
 
   const maxStage = Math.max(
     1,
@@ -298,7 +349,9 @@ export default function Funnel({
                 <button
                   key={stage.id}
                   onClick={() =>
-                    setSelected(stage.id)
+                    setSelected((cur) =>
+                      cur === stage.id ? null : stage.id
+                    )
                   }
                   className={`group relative flex items-center gap-4 overflow-hidden rounded-2xl p-4 text-left transition-all duration-200 border border-slate-200/80 shadow-sm ${
                     isActive
@@ -369,7 +422,7 @@ export default function Funnel({
                 en: "SENT BACK",
                 value: sentBack,
                 plain:
-                  "来了但不符合要求被退回的人。从应到岗分支出来，不算在已接受里。明细去试工页看。",
+                  "来了但不符合要求被退回的人。从应到岗分支出来，不算在已接受里。明细去被退回页看。",
                 pending: "需要到岗表核对 documented reason",
               },
             ].map((b) => (
@@ -405,8 +458,10 @@ export default function Funnel({
         </div>
 
         {/* ============ 流失分析（右侧等高） ============ */}
-        <aside className="relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/40 p-5 shadow-[0_4px_20px_rgba(15,23,42,0.06)]">
-          <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-indigo-100/50 blur-3xl" />
+        <aside className="relative flex flex-col overflow-visible rounded-2xl border border-slate-200/80 bg-gradient-to-b from-white via-slate-50/80 to-indigo-50/40 p-5 shadow-[0_4px_20px_rgba(15,23,42,0.06)]">
+          <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl">
+            <div className="absolute -right-16 -top-16 h-44 w-44 rounded-full bg-indigo-100/50 blur-3xl" />
+          </div>
 
           <div className="relative flex items-baseline justify-between border-b border-slate-200/70 pb-3">
             <h3 className="text-sm font-bold text-slate-900">
@@ -426,7 +481,7 @@ export default function Funnel({
           <div className="relative flex flex-1 flex-col justify-center gap-4 py-4">
             {losses.map((l) => {
               const v = l.value as number;
-              const isGain = v < 0;
+              const isGain = v > 0;
               const pct = mounted
                 ? Math.min(
                     100,
@@ -449,7 +504,6 @@ export default function Funnel({
                           : "text-slate-900"
                       }`}
                     >
-                      {isGain ? "+" : ""}
                       {formatNumber(v)}
                     </b>
                   </div>
@@ -473,191 +527,258 @@ export default function Funnel({
             })}
           </div>
 
-          <div className="relative flex gap-2.5 rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50/60 p-3.5 text-[11px] leading-5 text-amber-900 shadow-sm">
-            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-orange-500 text-xs font-bold text-white shadow">
-              !
-            </span>
-            <p>
-              <strong className="text-amber-800">
-                关键洞察 Key Insight：
-              </strong>
-              最大流失在发单→派遣（
-              {formatNumber(lossDispatch ?? 0)}
-              人没派出去），其次是到岗→接受（
-              {formatNumber(lossAccepted ?? 0)}
-              人）。发单比需求多
-              {formatNumber(
-                Math.abs(lossIssued ?? 0)
-              )}
-              人（超发），到岗比已派遣多
-              {formatNumber(
-                Math.abs(lossArrived ?? 0)
-              )}
-              人，是两份表口径不同，不是算错。
+          {/* ============ 管理预警（点展开在下面展开一个面板） ============ */}
+          <div ref={alertsRef} className="relative z-10 rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setAlertsOpen((v) => !v)}
+              className="flex w-full items-start justify-between text-left"
+            >
+              <span className="flex items-start gap-2">
+                <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-60"></span>
+                  <span className="relative inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-[11px] font-bold text-amber-600">
+                    !
+                  </span>
+                </span>
+                <span>
+                  <span className="block text-xs font-bold text-slate-900">
+                    管理预警
+                  </span>
+                  <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    Management Alerts
+                  </span>
+                </span>
+              </span>
+              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                {alertsOpen ? "收起 ▲" : "展开 ▼"}
+              </span>
+            </button>
+            <p className="mt-1 text-[11px] text-slate-400">
+              需要运营关注的事项 Areas for review
             </p>
+            {alertsOpen && (
+              <div className="absolute left-0 right-0 top-full z-10 mt-2 space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-xl">
+                {unfilled !== null && unfilled !== undefined && (
+                  <div className="rounded-lg border border-rose-100 bg-rose-50/60 p-4">
+                    <p className="text-xs font-semibold text-slate-800">
+                      未满足需求 Unfilled Demand
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      仍有 {formatNumber(unfilled)} 个岗位未被满足。
+                    </p>
+                  </div>
+                )}
+                {arrived !== null && (
+                  <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+                    <p className="text-xs font-semibold text-slate-800">
+                      到岗情况 Arrival Status
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      应到岗 {formatNumber(arrived)} 人，实际到场{" "}
+                      <span className="font-semibold text-blue-700">
+                        {formatNumber(arrived - (noShowPending ?? 0))}
+                      </span>{" "}
+                      人（到场率{" "}
+                      <span className="font-semibold text-blue-700">
+                        {formatPercent(
+                          arrived > 0
+                            ? ((arrived - (noShowPending ?? 0)) /
+                                arrived) *
+                                100
+                            : 0
+                        )}
+                      </span>
+                      ），没来{" "}
+                      <span className="font-semibold text-orange-700">
+                        {formatNumber(noShowPending ?? 0)}
+                      </span>{" "}
+                      人（No Show 率{" "}
+                      <span className="font-semibold text-orange-700">
+                        {formatPercent(
+                          arrived > 0
+                            ? ((noShowPending ?? 0) / arrived) * 100
+                            : 0
+                        )}
+                      </span>
+                      ）。
+                    </p>
+                  </div>
+                )}
+                {lowestWarehouseName && (
+                  <Link
+                    href="/warehouse"
+                    className="block rounded-lg border border-amber-100 bg-amber-50/60 p-4 transition hover:bg-amber-50"
+                  >
+                    <p className="text-xs font-semibold text-slate-800">
+                      仓库达成情况 Warehouse Fulfillment
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      {lowestWarehouseName} 达成率最低，为{" "}
+                      <span className="font-semibold text-amber-700">
+                        {formatPercent(lowestWarehouseRate ?? 0)}
+                      </span>
+                      。
+                    </p>
+                  </Link>
+                )}
+                {lowestSupplierName && (
+                  <Link
+                    href="/supplier"
+                    className="block rounded-lg border border-slate-100 bg-slate-50 p-4 transition hover:bg-slate-100"
+                  >
+                    <p className="text-xs font-semibold text-slate-800">
+                      供应商表现 Supplier Performance
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      {lowestSupplierName} 供应商达成率最低，为{" "}
+                      <span className="font-semibold text-slate-700">
+                        {formatPercent(lowestSupplierRate ?? 0)}
+                      </span>
+                      。
+                    </p>
+                  </Link>
+                )}
+              </div>
+            )}
           </div>
         </aside>
       </div>
 
-      {/* ============ 明细面板 ============ */}
-      <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-6 py-4">
-          <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-            {detail.zh} {detail.en} · 明细
-            Details
-          </p>
-          <p className="mt-1 text-sm text-slate-500">
-            {detail.plain}
-          </p>
-        </div>
-
-        <div className="px-6 py-5">
-          {selected === "requested" && (
-            <div className="space-y-3">
-              {data.topWarehouses.map(
-                (w) => (
-                  <div
-                    key={w.name}
-                    className="flex items-center gap-4"
-                  >
-                    <span className="w-36 shrink-0 truncate text-sm font-medium text-slate-700">
-                      {w.name}
-                    </span>
-                    <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className={`h-full rounded-full bg-slate-700 transition-all duration-700 ${
-                          mounted
-                            ? ""
-                            : "w-0"
-                        }`}
-                        style={{
-                          width: mounted
-                            ? `${
-                                (w.requested /
-                                  Math.max(
-                                    data
-                                      .topWarehouses[0]
-                                      .requested,
-                                    1
-                                  )) *
-                                100
-                              }%`
-                            : "0%",
-                        }}
-                      />
-                    </div>
-                    <span className="w-24 shrink-0 text-right text-sm tabular-nums text-slate-500">
-                      {formatNumber(
-                        w.requested
-                      )}
-                    </span>
-                  </div>
-                )
-              )}
-              <p className="pt-1 text-xs text-slate-400">
-                需求最多的 5 个仓库 Top 5
-                warehouses by requested
-              </p>
+      {/* ============ 明细 Flyover（点阶段在旁边浮出，不在下面显示；点遮罩或 × 关闭） ============ */}
+      {selected !== null && detail !== null && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/30"
+            onClick={() => setSelected(null)}
+          />
+          <div className="fixed right-0 top-0 z-50 flex h-full flex-col bg-white shadow-xl"
+            style={{ width: "420px", maxWidth: "92vw" }}>
+            <div className="flex items-start justify-between border-b border-slate-100 px-6 py-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  {detail.zh} {detail.en} · 明细 Details
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-500">
+                  {detail.plain}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                className="ml-4 shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-sm font-bold text-slate-600"
+              >
+                ×
+              </button>
             </div>
-          )}
-
-          {selected === "dispatched" && (
-            <div className="space-y-3">
-              {data.topSuppliers.map(
-                (s) => (
-                  <div
-                    key={s.name}
-                    className="flex items-center gap-4"
-                  >
-                    <span className="w-44 shrink-0 truncate text-sm font-medium text-slate-700">
-                      {s.name}
-                    </span>
-                    <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-teal-600 transition-all duration-700"
-                        style={{
-                          width: mounted
-                            ? `${
-                                (s.filled /
-                                  Math.max(
-                                    data
-                                      .topSuppliers[0]
-                                      .filled,
-                                    1
-                                  )) *
-                                100
-                              }%`
-                            : "0%",
-                        }}
-                      />
-                    </div>
-                    <span className="w-24 shrink-0 text-right text-sm tabular-nums text-slate-500">
-                      {formatNumber(
-                        s.filled
-                      )}
-                    </span>
-                  </div>
-                )
-              )}
-              <p className="pt-1 text-xs text-slate-400">
-                派出人数最多的 5 家供应商 Top
-                5 suppliers by dispatched
-              </p>
-            </div>
-          )}
-
-          {selected === "arrived" &&
-            arrived !== null && (
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-6 rounded-xl bg-blue-50 p-5">
-                  <div>
-                    <p className="text-xs text-slate-500">
-                      应到岗 Scheduled
-                    </p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
-                      {formatNumber(arrived)}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      人员到岗表有 OTWS
-                      ID 的全量记录（人次）。
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500">
-                      没来 No Show
-                    </p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
-                      {formatNumber(
-                        noShowPending ?? 0
-                      )}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      应到岗但没来的人次。
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500">
-                      被退回 Sent back
-                    </p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
-                      {formatNumber(
-                        sentBack ?? 0
-                      )}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      来了但不符合要求被退回的人次。
-                    </p>
-                  </div>
-                </div>
-                {data.topArrivalWarehouses
-                  .length > 0 && (
-                  <div className="space-y-3">
-                    {data.topArrivalWarehouses.map(
-                      (w) => (
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              {selected === "requested" && (
+                <div className="space-y-3">
+                  {data.topWarehouses.map((w) => (
+                    <div key={w.name} className="flex items-center gap-4">
+                      <span className="w-36 shrink-0 truncate text-sm font-medium text-slate-700">
+                        {w.name}
+                      </span>
+                      <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100">
                         <div
-                          key={w.name}
-                          className="flex items-center gap-4"
-                        >
+                          className="h-full rounded-full bg-slate-700 transition-all duration-700"
+                          style={{
+                            width: mounted
+                              ? `${(w.requested / Math.max(data.topWarehouses[0].requested, 1)) * 100}%`
+                              : "0%",
+                          }}
+                        />
+                      </div>
+                      <span className="w-24 shrink-0 text-right text-sm tabular-nums text-slate-500">
+                        {formatNumber(w.requested)}
+                      </span>
+                    </div>
+                  ))}
+                  <p className="pt-1 text-xs text-slate-400">
+                    需求最多的 5 个仓库 Top 5 warehouses by requested
+                  </p>
+                </div>
+              )}
+              {selected === "issued" && (
+                <div className="rounded-xl bg-slate-50 p-5">
+                  <p className="text-sm leading-6 text-slate-500">
+                    {issued > requested
+                      ? `已发单比需求多一点，是怕供应商派不够人，先多发一点留余量。已发单 ${formatNumber(issued)}，比需求多 ${formatNumber(issued - requested)}。`
+                      : issued === requested
+                        ? `已发单和需求一样多，刚好发够。已发单 ${formatNumber(issued)}。`
+                        : `已发单比需求少 ${formatNumber(requested - issued)}，需求没发完。已发单 ${formatNumber(issued)}，需求 ${formatNumber(requested)}。`}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                    {issued > requested
+                      ? "Issued is a bit more than requested — a buffer in case suppliers don’t dispatch enough."
+                      : issued === requested
+                        ? "Issued equals requested — exactly enough."
+                        : "Issued is less than requested — not all demand was issued."}
+                  </p>
+                </div>
+              )}
+              {selected === "dispatched" && (
+                <div className="space-y-3">
+                  {data.topSuppliers.map((s) => (
+                    <div key={s.name} className="flex items-center gap-4">
+                      <span className="w-44 shrink-0 truncate text-sm font-medium text-slate-700">
+                        {s.name}
+                      </span>
+                      <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-teal-600 transition-all duration-700"
+                          style={{
+                            width: mounted
+                              ? `${(s.filled / Math.max(data.topSuppliers[0].filled, 1)) * 100}%`
+                              : "0%",
+                          }}
+                        />
+                      </div>
+                      <span className="w-24 shrink-0 text-right text-sm tabular-nums text-slate-500">
+                        {formatNumber(s.filled)}
+                      </span>
+                    </div>
+                  ))}
+                  <p className="pt-1 text-xs text-slate-400">
+                    派出人数最多的 5 家供应商 Top 5 suppliers by dispatched
+                  </p>
+                </div>
+              )}
+              {selected === "arrived" && arrived !== null && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-6 rounded-xl bg-blue-50 p-5">
+                    <div>
+                      <p className="text-xs text-slate-500">应到岗 Scheduled</p>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
+                        {formatNumber(arrived)}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        人员到岗表有 OTWS ID 的全量记录（人次）。
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">没来 No Show</p>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
+                        {formatNumber(noShowPending ?? 0)}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        应到岗但没来的人次。
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">被退回 Sent back</p>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
+                        {formatNumber(sentBack ?? 0)}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        来了但不符合要求被退回的人次。
+                      </p>
+                    </div>
+                  </div>
+                  {data.topArrivalWarehouses.length > 0 && (
+                    <div className="space-y-3">
+                      {data.topArrivalWarehouses.map((w) => (
+                        <div key={w.name} className="flex items-center gap-4">
                           <span className="w-44 shrink-0 truncate text-sm font-medium text-slate-700">
                             {w.name}
                           </span>
@@ -666,44 +787,25 @@ export default function Funnel({
                               className="h-full rounded-full bg-blue-600 transition-all duration-700"
                               style={{
                                 width: mounted
-                                  ? `${
-                                      (w.count /
-                                        Math.max(
-                                          data
-                                            .topArrivalWarehouses[0]
-                                            .count,
-                                          1
-                                        )) *
-                                      100
-                                    }%`
+                                  ? `${(w.count / Math.max(data.topArrivalWarehouses[0].count, 1)) * 100}%`
                                   : "0%",
                               }}
                             />
                           </div>
                           <span className="w-24 shrink-0 text-right text-sm tabular-nums text-slate-500">
-                            {formatNumber(
-                              w.count
-                            )}
+                            {formatNumber(w.count)}
                           </span>
                         </div>
-                      )
-                    )}
-                    <p className="pt-1 text-xs text-slate-400">
-                      到岗人次最多的 5 个仓库 Top
-                      5 warehouses by arrival
-                      events
-                    </p>
-                  </div>
-                )}
-                {data.topArrivalSuppliers
-                  .length > 0 && (
-                  <div className="space-y-3">
-                    {data.topArrivalSuppliers.map(
-                      (s) => (
-                        <div
-                          key={s.name}
-                          className="flex items-center gap-4"
-                        >
+                      ))}
+                      <p className="pt-1 text-xs text-slate-400">
+                        到岗人次最多的 5 个仓库 Top 5 warehouses by arrival events
+                      </p>
+                    </div>
+                  )}
+                  {data.topArrivalSuppliers.length > 0 && (
+                    <div className="space-y-3">
+                      {data.topArrivalSuppliers.map((s) => (
+                        <div key={s.name} className="flex items-center gap-4">
                           <span className="w-44 shrink-0 truncate text-sm font-medium text-slate-700">
                             {s.name}
                           </span>
@@ -712,237 +814,76 @@ export default function Funnel({
                               className="h-full rounded-full bg-blue-600 transition-all duration-700"
                               style={{
                                 width: mounted
-                                  ? `${
-                                      (s.count /
-                                        Math.max(
-                                          data
-                                            .topArrivalSuppliers[0]
-                                            .count,
-                                          1
-                                        )) *
-                                      100
-                                    }%`
+                                  ? `${(s.count / Math.max(data.topArrivalSuppliers[0].count, 1)) * 100}%`
                                   : "0%",
                               }}
                             />
                           </div>
                           <span className="w-24 shrink-0 text-right text-sm tabular-nums text-slate-500">
-                            {formatNumber(
-                              s.count
-                            )}
+                            {formatNumber(s.count)}
                           </span>
                         </div>
-                      )
-                    )}
-                    <p className="pt-1 text-xs text-slate-400">
-                      到岗人次最多的 5 家供应商 Top
-                      5 suppliers by arrival
-                      events
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
-          {selected === "accepted" &&
-            accepted !== null && (
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-6 rounded-xl bg-emerald-50 p-5">
-                  <div>
-                    <p className="text-xs text-slate-500">
-                      已接受 Accepted
-                    </p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
-                      {formatNumber(accepted)}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      应到岗 − No Show −
-                      被退回，剩下的人次。
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500">
-                      没来 No Show
-                    </p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
-                      {formatNumber(
-                        noShowPending ?? 0
-                      )}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      应到岗但没来的人次。
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500">
-                      被退回 Sent back
-                    </p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
-                      {formatNumber(
-                        sentBack ?? 0
-                      )}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      来了但不符合要求被退回的人次。
-                    </p>
-                  </div>
+                      ))}
+                      <p className="pt-1 text-xs text-slate-400">
+                        到岗人次最多的 5 家供应商 Top 5 suppliers by arrival events
+                      </p>
+                    </div>
+                  )}
                 </div>
-                <p className="text-xs leading-5 text-slate-400">
-                  口径说明：人员到岗表口径，有 OTWS
-                  ID 的算应到岗；No
-                  Show 勾选的算没来，有不符合要求原因的算被退回。
-                </p>
-              </div>
-            )}
-
-          {(selected === "accepted" &&
-            accepted === null) ||
-          (selected === "arrived" &&
-            arrived === null) ? (
-            <div className="rounded-xl bg-slate-50 p-5">
-              <p className="text-sm font-semibold text-slate-700">
-                为什么算不出来 Why unavailable
-              </p>
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                {selected === "arrived"
-                  ? "已到岗需要打卡、签到或经核实的到岗证据。当前考勤文件是空的，没有到岗证据就不能算——按 SOP，缺考勤只能记为待核实，不能当成未到岗。需要考勤数据 Need attendance records with arrival evidence."
-                  : "已接受需要仓库的验收确认。打卡只能证明人来过、干过活，不能自动等于仓库接收。需要仓库验收记录 Need warehouse acceptance records."}
-              </p>
+              )}
+              {selected === "accepted" && accepted !== null && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-6 rounded-xl bg-emerald-50 p-5">
+                    <div>
+                      <p className="text-xs text-slate-500">已接受 Accepted</p>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
+                        {formatNumber(accepted)}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        应到岗 − No Show − 被退回，剩下的人次。
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">没来 No Show</p>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
+                        {formatNumber(noShowPending ?? 0)}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        应到岗但没来的人次。
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">被退回 Sent back</p>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
+                        {formatNumber(sentBack ?? 0)}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        来了但不符合要求被退回的人次。
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs leading-5 text-slate-400">
+                    口径说明：人员到岗表口径，有 OTWS ID 的算应到岗；No Show 勾选的算没来，有不符合要求原因的算被退回。
+                  </p>
+                </div>
+              )}
+              {((selected === "accepted" && accepted === null) ||
+                (selected === "arrived" && arrived === null)) && (
+                <div className="rounded-xl bg-slate-50 p-5">
+                  <p className="text-sm font-semibold text-slate-700">
+                    为什么算不出来 Why unavailable
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    {selected === "arrived"
+                      ? "已到岗需要打卡、签到或经核实的到岗证据。当前考勤文件是空的，没有到岗证据就不能算——按 SOP，缺考勤只能记为待核实，不能当成未到岗。需要考勤数据 Need attendance records with arrival evidence."
+                      : "已接受需要仓库的验收确认。打卡只能证明人来过、干过活，不能自动等于仓库接收。需要仓库验收记录 Need warehouse acceptance records."}
+                  </p>
+                </div>
+              )}
             </div>
-          ) : null}
-        </div>
-      </div>
-
-      {/* ============ SOP 比率卡片（人头口径，同一批人） ============ */}
-      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {[
-          {
-            zh: "派遣率",
-            en: "Dispatch Rate",
-            value:
-              issued !== null &&
-              issued > 0
-                ? formatPercent(
-                    (dispatched / issued) *
-                      100
-                  )
-                : "N/A",
-            formula:
-              issued !== null
-                ? `已派遣 ÷ 已发单 = ${formatNumber(
-                    dispatched
-                  )} ÷ ${formatNumber(
-                    issued
-                  )}`
-                : "已派遣 ÷ 已发单",
-            plain:
-              issued !== null && issued > 0
-                ? `每 100 个已发单人次，约 ${Math.round(
-                    (dispatched / issued) *
-                      100
-                  )} 人次实际派出。`
-                : "待发单数据：分母需要发单详情。",
-            ok:
-              issued !== null &&
-              issued > 0,
-          },
-          {
-            zh: "接受率",
-            en: "Acceptance Rate",
-            value:
-              accepted !== null &&
-              arrived !== null &&
-              arrived > 0
-                ? formatPercent(
-                    (accepted / arrived) *
-                      100
-                  )
-                : "N/A",
-            formula:
-              accepted !== null &&
-              arrived !== null
-                ? `已接受 ÷ 应到岗 = ${formatNumber(
-                    accepted
-                  )} ÷ ${formatNumber(
-                    arrived
-                  )}`
-                : "已接受 ÷ 应到岗",
-            plain:
-              accepted !== null &&
-              arrived !== null
-                ? `每 100 个应到岗的人，约 ${Math.round(
-                    arrived > 0
-                      ? (accepted / arrived) *
-                          100
-                      : 0
-                  )} 人最终上岗。`
-                : "待数据：分子需要已接受的人数。",
-            ok:
-              accepted !== null &&
-              arrived !== null,
-          },
-          {
-            zh: "需求满足率",
-            en: "Demand Fulfillment",
-            value:
-              accepted !== null &&
-              requested > 0
-                ? formatPercent(
-                    (accepted / requested) *
-                      100
-                  )
-                : "N/A",
-            formula:
-              accepted !== null
-                ? `已接受 ÷ 需求 = ${formatNumber(
-                    accepted
-                  )} ÷ ${formatNumber(
-                    requested
-                  )}`
-                : "已接受 ÷ 需求",
-            plain:
-              accepted !== null &&
-              requested > 0
-                ? `每 100 个需求名额，最终约 ${Math.round(
-                    (accepted / requested) *
-                      100
-                  )} 人上岗。`
-                : "待数据：分子需要已接受的人数。",
-            ok: accepted !== null,
-          },
-        ].map((m) => (
-          <div
-            key={m.en}
-            className="group relative rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-          >
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              {m.zh} {m.en}
-            </p>
-            <p
-              className={`mt-3 text-3xl font-bold tracking-tight tabular-nums ${
-                m.ok
-                  ? "text-slate-900"
-                  : "text-slate-300"
-              }`}
-            >
-              {m.value}
-            </p>
-            <p className="mt-2 font-mono text-xs text-slate-500">
-              {m.formula}
-            </p>
-            <p className="mt-2 text-xs leading-5 text-slate-500">
-              {m.plain}
-            </p>
           </div>
-        ))}
-      </div>
-
-      {/* <p className="mt-4 text-center text-[11px] leading-5 text-slate-400">
-       口径遵循：比率由分子分母加总计算，不对百分比取平均；超发不截断如实展示。
-        Rates are aggregated from summed numerators and denominators,
-        never averaged; over-issue shown
-        as-is.
-      </p> */}
+        </>
+      )}
 
     </div>
   );

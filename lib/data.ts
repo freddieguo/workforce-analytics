@@ -317,7 +317,6 @@ export function getDashboardData() {
       arrivalTrackingSummary: getDataset(dashboard, "arrival_tracking_summary"),
       arrivalTrackingWarehouse: getDataset(dashboard, "arrival_tracking_warehouse"),
       arrivalTrackingReason: getDataset(dashboard, "arrival_tracking_reason"),
-      arrivalTrackingDaily: getDataset(dashboard, "arrival_tracking_daily"),
       arrivalTrackingSupplier: getDataset(dashboard, "arrival_tracking_supplier"),
 
       matchSupplierArrival: getDataset(dashboard, "match_supplier_arrival"),
@@ -328,7 +327,20 @@ export function getDashboardData() {
 
       arrivalTrackingJob: getDataset(dashboard, "arrival_tracking_job"),
 
-      jobDemandSummary: getDataset(dashboard, "job_demand_summary")
+      jobDemandSummary: getDataset(dashboard, "job_demand_summary"),
+
+      demandDaily: getDataset(dashboard, "demand_daily"),
+      allocDaily: getDataset(dashboard, "alloc_daily"),
+      allocDailySupplier: getDataset(dashboard, "alloc_daily_supplier"),
+      allocDailyWarehouse: getDataset(dashboard, "alloc_daily_warehouse"),
+      arrivalTrackingDaily: getDataset(dashboard, "arrival_tracking_daily"),
+      arrivalTrackingDailySupplier: getDataset(dashboard, "arrival_tracking_daily_supplier"),
+      arrivalTrackingDailyWarehouse: getDataset(dashboard, "arrival_tracking_daily_warehouse"),
+      demandDailyJob: getDataset(dashboard, "demand_daily_job"),
+      allocDailyJob: getDataset(dashboard, "alloc_daily_job"),
+      arrivalTrackingDailyJob: getDataset(dashboard, "arrival_tracking_daily_job"),
+      arrivalTrackingDailyReason: getDataset(dashboard, "arrival_tracking_daily_reason"),
+
 
 
   };

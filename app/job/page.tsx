@@ -1,13 +1,10 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
+import DateRangePicker from "@/components/DateRangePicker";
 import { getDashboardData, type CsvRow } from "@/lib/data";
+import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
 
 /* Helpers */
-function numberValue(value: string | undefined) {
-  if (!value) return 0;
-  const n = Number(value.replace(/,/g, "").replace(/%/g, "").trim());
-  return Number.isFinite(n) ? n : 0;
-}
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(Math.round(value));
 }
@@ -57,39 +54,55 @@ type JobRow = {
   fulfillmentRate: number | null;
 };
 
-export default function JobPage() {
-  const { demand, jobDemandSummary, jobAllocSummary, arrivalTrackingJob } = getDashboardData();
+export default async function JobPage({ searchParams }: any) {
+  const params = (await searchParams) ?? {};
+  const saved = await getSavedRange();
+  const startParam = typeof params.start === "string" ? params.start : saved.start;
+  const endParam = typeof params.end === "string" ? params.end : saved.end;
 
-  // 发单详情按工种：已发单、已派遣
-  const allocMap = new Map<string, { issued: number; filled: number }>(
-    (((jobAllocSummary ?? []) as CsvRow[]).map((r: CsvRow) => [
-      getValue(r, ["工种"]) || "未分类",
-      {
-        issued: numberValue(getValue(r, ["需求人数"])),
-        filled: numberValue(getValue(r, ["已派遣人数"])),
-      },
-    ]) as [string, { issued: number; filled: number }][])
+  const { demandDailyJob, allocDailyJob, arrivalTrackingDailyJob } = getDashboardData();
+
+  // 日期范围：需求日期、发单日期与到岗日期的并集（各维度按自己的日期算）
+  const demandRows = ((demandDailyJob ?? []) as CsvRow[]);
+  const allocRows = ((allocDailyJob ?? []) as CsvRow[]);
+  const atRows = ((arrivalTrackingDailyJob ?? []) as CsvRow[]);
+  const { start, end, min, max } = resolveRange(
+    [...demandRows.map((r) => getValue(r, ["日期"])),
+     ...allocRows.map((r) => getValue(r, ["日期"])),
+     ...atRows.map((r) => getValue(r, ["日期"]))],
+    startParam,
+    endParam
   );
 
-  // 到岗表按工种聚合：实际到场、已接受
+  // 选定范围内按工种汇总：需求 + 发单（已发单/已派遣）+ 到岗（到岗/NoShow/已接受）
+  const demandByJob = new Map<string, number>(
+    sumByKey(filterByDateRange(demandRows, start, end), "工种", ["需求人数"])
+      .map((r) => [String(r["工种"]), Number(r["需求人数"] ?? 0)])
+  );
+  const allocMap = new Map<string, { issued: number; filled: number }>(
+    sumByKey(filterByDateRange(allocRows, start, end), "工种",
+      ["已发单人数", "已派遣人数"])
+      .map((r) => [String(r["工种"]), {
+        issued: Number(r["已发单人数"] ?? 0),
+        filled: Number(r["已派遣人数"] ?? 0),
+      }])
+  );
+
+  // 到岗表按工种聚合：实际到场、已接受（子型号归入大类）
   const atJobMap = new Map<string, { arrived: number; accepted: number }>();
-  for (const r of ((arrivalTrackingJob ?? []) as CsvRow[])) {
-    const key = normalizeJobKey(getValue(r, ["工种"]) || "");
+  for (const r of sumByKey(filterByDateRange(atRows, start, end), "工种",
+    ["到岗人次", "NoShow人次", "已接受人次"])) {
+    const key = normalizeJobKey(String(r["工种"] ?? ""));
     if (!key || key === "未分类") continue;
-    const total = numberValue(getValue(r, ["到岗人次"]));
-    const noshow = numberValue(getValue(r, ["NoShow人次"]));
-    const accepted = numberValue(getValue(r, ["已接受人次"]));
     const e = atJobMap.get(key) ?? { arrived: 0, accepted: 0 };
-    e.arrived += total - noshow;
-    e.accepted += accepted;
+    e.arrived += Number(r["到岗人次"] ?? 0) - Number(r["NoShow人次"] ?? 0);
+    e.accepted += Number(r["已接受人次"] ?? 0);
     atJobMap.set(key, e);
   }
 
   // 以需求池工种为主
-  const jobs: JobRow[] = ((jobDemandSummary ?? []) as CsvRow[])
-    .map((row) => {
-      const name = getValue(row, ["工种"]) || "未分类";
-      const demandCount = numberValue(getValue(row, ["需求人数"]));
+  const jobs: JobRow[] = [...demandByJob.entries()]
+    .map(([name, demandCount]) => {
       const alloc = allocMap.get(name);
       const at = atJobMap.get(name);
       const accepted = at?.accepted ?? null;
@@ -110,15 +123,12 @@ export default function JobPage() {
   const totalIssued = jobs.reduce((s, x) => s + (x.issued ?? 0), 0);
   const totalArrived = jobs.reduce((s, x) => s + (x.arrived ?? 0), 0);
   const totalAccepted = jobs.reduce((s, x) => s + (x.accepted ?? 0), 0);
-  const overallFulfillment = totalDemand > 0 ? (totalAccepted / totalDemand) * 100 : 0;
-
   const mostDemanded = jobs[0] ?? null;
   const worst = [...jobs].sort((a, b) => (a.fulfillmentRate ?? 999) - (b.fulfillmentRate ?? 999))[0] ?? null;
   const best = [...jobs].sort((a, b) => (b.fulfillmentRate ?? -1) - (a.fulfillmentRate ?? -1))[0] ?? null;
 
-  const demandDates = ((demand ?? []) as CsvRow[]).map((r) => getValue(r, ["需求日期", "日期"])).filter(Boolean).sort();
-  const periodLabel = demandDates[0] && demandDates[demandDates.length - 1]
-    ? `${formatDateLabel(demandDates[0])} — ${formatDateLabel(demandDates[demandDates.length - 1])}`
+  const periodLabel = start && end
+    ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
     : "—";
 
   return (
@@ -132,14 +142,25 @@ export default function JobPage() {
               <p className="text-xs font-medium text-slate-400">人力管理 Workforce Management</p>
               <h1 className="mt-0.5 text-xl font-bold tracking-tight">工种分析 Job Analysis</h1>
             </div>
-            <div className="hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-right sm:block">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">统计周期 Reporting Period</p>
-              <p className="text-sm font-semibold text-slate-700">{periodLabel}</p>
+            <div className="flex items-center gap-3">
+              <div className="hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-right sm:block">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">统计周期 Reporting Period</p>
+                <p className="text-sm font-semibold text-slate-700">{periodLabel}</p>
+              </div>
+              <div className="flex items-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <span className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-xs font-semibold text-emerald-700">已处理数据 Processed Data</span>
+              </div>
             </div>
           </div>
         </header>
 
         <div className="px-5 py-7 md:px-8">
+          {/* 日期筛选 */}
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <DateRangePicker start={start} end={end} min={min} max={max} />
+          </div>
+
           {/* Hero */}
           <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-violet-600 via-violet-700 to-purple-800 p-8 text-white shadow-xl">
             <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />

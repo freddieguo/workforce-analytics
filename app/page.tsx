@@ -1,13 +1,18 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
-import Funnel, {
-  type FunnelData,
-} from "@/components/Funnel";
+import DateRangePicker from "@/components/DateRangePicker";
+import Funnel, { type FunnelData } from "@/components/Funnel";
 
 import {
   getDashboardData,
   type CsvRow,
 } from "@/lib/data";
+import {
+  resolveRange,
+  filterByDateRange,
+  sumByKey,
+  getSavedRange,
+} from "@/lib/dateRange";
 
 /* =========================================================
    Helpers
@@ -76,20 +81,6 @@ function getValue(
   return key ? row[key] : "";
 }
 
-function sumColumn(
-  rows: CsvRow[],
-  candidates: string[]
-) {
-  return rows.reduce((sum, row) => {
-    return (
-      sum +
-      numberValue(
-        getValue(row, candidates)
-      )
-    );
-  }, 0);
-}
-
 function formatDateLabel(value: string) {
   if (!value) return "—";
 
@@ -112,48 +103,6 @@ function formatDateLabel(value: string) {
     day: "2-digit",
     year: "numeric",
   });
-}
-
-function groupRows(
-  rows: CsvRow[],
-  groupCandidates: string[],
-  valueCandidates: string[]
-) {
-  const groups = new Map<
-    string,
-    {
-      name: string;
-      value: number;
-    }
-  >();
-
-  for (const row of rows) {
-    const name =
-      getValue(
-        row,
-        groupCandidates
-      ) || "未分类";
-
-    const value = numberValue(
-      getValue(
-        row,
-        valueCandidates
-      )
-    );
-
-    const current = groups.get(name);
-
-    groups.set(name, {
-      name,
-      value:
-        (current?.value ?? 0) +
-        value,
-    });
-  }
-
-  return Array.from(
-    groups.values()
-  );
 }
 
 /* =========================================================
@@ -190,179 +139,75 @@ function MiniBar({
   );
 }
 
-function AlertIcon({
-  type,
-}: {
-  type: "danger" | "warning" | "info";
-}) {
-  const styles = {
-    danger:
-      "bg-rose-100 text-rose-600",
-    warning:
-      "bg-amber-100 text-amber-600",
-    info:
-      "bg-violet-100 text-violet-600",
-  };
-
-  const symbols = {
-    danger: "!",
-    warning: "!",
-    info: "i",
-  };
-
-  return (
-    <div
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold ${styles[type]}`}
-    >
-      {symbols[type]}
-    </div>
-  );
-}
-
 /* =========================================================
    Page
 ========================================================= */
 
-export default function Home() {
+
+export default async function Home({ searchParams }: any) {
+  const params = (await searchParams) ?? {};
+  const saved = await getSavedRange();
+  const startParam = typeof params.start === "string" ? params.start : saved.start;
+  const endParam = typeof params.end === "string" ? params.end : saved.end;
+
   const data = getDashboardData();
 
   const {
-    demand,
     allocation,
-    attendance,
-    supplierSummary,
-    warehouseSummary,
-    warehouseAllocSummary,
-    trialFailureSupplier,
-    trialFailureWarehouse,
-    arrivalSupplier,
-    arrivalWarehouse,
-    arrivalSummary,
-    acceptanceSummary,
-    arrivalTrackingSummary,
-    arrivalTrackingWarehouse,
-    arrivalTrackingSupplier,
-    matchSupplierArrival,
-    matchWarehouseArrival,
+    demandDaily,
+    allocDaily,
+    allocDailySupplier,
+    allocDailyWarehouse,
+    arrivalTrackingDaily,
+    arrivalTrackingDailySupplier,
+    arrivalTrackingDailyWarehouse,
   } = data;
+
+  /* =======================================================
+     日期范围：各维度按自己的日期算（需求/发单按需求日期，到岗按到岗日期）
+  ======================================================= */
+
+  const demandDailyRows = ((demandDaily ?? []) as CsvRow[]);
+  const allocDailyRows = ((allocDaily ?? []) as CsvRow[]);
+  const atDailyRows = ((arrivalTrackingDaily ?? []) as CsvRow[]);
+  const { start, end, min, max } = resolveRange(
+    [
+      ...demandDailyRows.map((r) => getValue(r, ["日期"])),
+      ...allocDailyRows.map((r) => getValue(r, ["日期"])),
+      ...atDailyRows.map((r) => getValue(r, ["日期"])),
+    ],
+    startParam,
+    endParam
+  );
+
+  const demandInRange = filterByDateRange(demandDailyRows, start, end);
+  const allocInRange = filterByDateRange(allocDailyRows, start, end);
+  const atInRange = filterByDateRange(atDailyRows, start, end);
 
   /* =======================================================
      CORE METRICS
   ======================================================= */
 
-  const totalDemand = sumColumn(
-    demand,
-    ["需求总人数"]
+  const totalDemand = demandInRange.reduce(
+    (s, r) => s + numberValue(getValue(r, ["需求人数"])),
+    0
   );
 
-  const totalFilled = sumColumn(
-    allocation,
-    [
-      "供应商已派遣人数",
-      "已派遣人数",
-    ]
+  const totalFilled = allocInRange.reduce(
+    (s, r) => s + numberValue(getValue(r, ["已派遣人数"])),
+    0
   );
 
-  const totalRequested = sumColumn(
-    allocation,
-    [
-      "供应商需派遣人数",
-      "需求人数",
-    ]
+  const totalRequested = allocInRange.reduce(
+    (s, r) => s + numberValue(getValue(r, ["已发单人数"])),
+    0
   );
 
-  const totalUnfilled = sumColumn(
-    allocation,
-    [
-      "供应商未派遣人数",
-      "未派遣人数",
-    ]
-  );
 
-  const fillRate =
-    totalRequested > 0
-      ? (totalFilled /
-          totalRequested) *
-        100
-      : 0;
-
-  /* =======================================================
-     OT
-  ======================================================= */
-
-  const totalWorkHours = sumColumn(
-    attendance,
-    [
-      "总工作时长",
-      "工作时长",
-      "总工时",
-      "时长总计",
-    ]
-  );
-
-  const totalOtHours = sumColumn(
-    attendance,
-    [
-      "总加班时长",
-      "加班时长",
-      "加班工时",
-      "OT时长",
-    ]
-  );
-
-  const otRate =
-    totalWorkHours > 0
-      ? (totalOtHours /
-          totalWorkHours) *
-        100
-      : 0;
-
-  /* =======================================================
-     Trial Failure
-  ======================================================= */
-
-  const trialFailureCount =
-    sumColumn(
-      trialFailureSupplier,
-      [
-        "试工不通过人数",
-        "试工不通过",
-      ]
-    );
 
   /* =======================================================
      Supplier Ranking
   ======================================================= */
-
-  // 到岗率：发单已派遣 × 到岗实到
-  const supMatchMap = new Map<string, { arrived: number | null; arrivalRate: number | null }>(
-    ((matchSupplierArrival ?? []) as CsvRow[]).map((r: CsvRow) => {
-      const v = getValue(r, ["到岗率"]);
-      return [
-        getValue(r, ["供应商"]) || "未分类",
-        {
-          arrived: numberValue(getValue(r, ["实到"])),
-          arrivalRate: v === null || v === undefined || v === "" ? null : Number(v),
-        },
-      ] as [string, { arrived: number | null; arrivalRate: number | null }];
-    })
-  );
-
-  // 到岗表按供应商：实际到达、已接受
-  const atSupMap = new Map<string, { actualArrived: number | null; accepted: number | null }>(
-    ((arrivalTrackingSupplier ?? []) as CsvRow[]).map((r: CsvRow) => {
-      const total = numberValue(getValue(r, ["到岗人次"]));
-      const noshow = numberValue(getValue(r, ["NoShow人次"]));
-      const accepted = numberValue(getValue(r, ["已接受人次"]));
-      return [
-        getValue(r, ["供应商"]) || "未分类",
-        {
-          actualArrived: total - noshow,
-          accepted: accepted,
-        },
-      ] as [string, { actualArrived: number | null; accepted: number | null }];
-    })
-  );
 
   type SupplierRow = {
     name: string;
@@ -377,38 +222,66 @@ export default function Home() {
     fulfillmentRate: number | null;
   };
 
-  let suppliers: SupplierRow[] =
-    supplierSummary.length > 0
-      ? (supplierSummary as CsvRow[]).map((row: CsvRow) => {
-          const name =
-            getValue(row, ["供应商", "供应商名称"]) || "未分类";
-          const requested = numberValue(
-            getValue(row, ["需求人数", "供应商需派遣人数"])
-          );
-          const filled = numberValue(
-            getValue(row, ["已派遣人数", "供应商已派遣人数"])
-          );
-          const rate = requested > 0 ? (filled / requested) * 100 : 0;
-          const m = supMatchMap.get(name);
-          const at = atSupMap.get(name);
-          const accepted = at?.accepted ?? null;
-          return {
-            name,
-            requested,
-            filled,
-            rate,
-            dispatchRate: rate,
-            arrived: m?.arrived ?? null,
-            arrivalRate: m?.arrivalRate ?? null,
-            actualArrived: at?.actualArrived ?? null,
-            accepted: accepted,
-            fulfillmentRate:
-              accepted !== null && requested > 0
-                ? (accepted / requested) * 100
-                : null,
-          };
-        })
-      : [];
+  // 选定范围内按供应商汇总：发单（已发单/已派遣）+ 到岗（到岗/NoShow/已接受）
+  const allocBySup = new Map<string, Record<string, unknown>>(
+    sumByKey(
+      filterByDateRange(
+        ((allocDailySupplier ?? []) as CsvRow[]),
+        start,
+        end
+      ),
+      "供应商",
+      ["已发单人数", "已派遣人数", "未派遣人数"]
+    ).map((r) => [String(r["供应商"]), r])
+  );
+  const atBySup = new Map<string, Record<string, unknown>>(
+    sumByKey(
+      filterByDateRange(
+        ((arrivalTrackingDailySupplier ?? []) as CsvRow[]),
+        start,
+        end
+      ),
+      "供应商",
+      ["到岗人次", "NoShow人次", "已接受人次"]
+    ).map((r) => [String(r["供应商"]), r])
+  );
+
+  let suppliers: SupplierRow[] = [...allocBySup.keys()].map((name) => {
+    const a = allocBySup.get(name)!;
+    const at = atBySup.get(name);
+    const requested = Number(a["已发单人数"] ?? 0);
+    const filled = Number(a["已派遣人数"] ?? 0);
+    const rate = requested > 0 ? (filled / requested) * 100 : 0;
+    // 实际到场 = 到岗人次 − NoShow人次；到场率 = 实际到场 ÷ 已派遣
+    const total = at ? Number(at["到岗人次"] ?? 0) : 0;
+    const noshow = at ? Number(at["NoShow人次"] ?? 0) : 0;
+    // 没派人（已派遣=0）就一定没人到场、没人接受：没到岗数据时按 0 算，不按 null 当无数据
+    const actualArrived = at ? total - noshow : filled === 0 ? 0 : null;
+    const accepted = at
+      ? Number(at["已接受人次"] ?? 0)
+      : filled === 0
+        ? 0
+        : null;
+    const arrivalRate =
+      actualArrived !== null && filled > 0
+        ? (actualArrived / filled) * 100
+        : null;
+    return {
+      name,
+      requested,
+      filled,
+      rate,
+      dispatchRate: rate,
+      arrived: actualArrived,
+      arrivalRate,
+      actualArrived,
+      accepted,
+      fulfillmentRate:
+        accepted !== null && requested > 0
+          ? (accepted / requested) * 100
+          : null,
+    };
+  });
 
   suppliers = suppliers
     .filter((x) => x.name !== "未分类")
@@ -428,145 +301,190 @@ export default function Home() {
     rate: number;
     arrived: number | null;
     arrivalRate: number | null;
+    accepted: number | null;
+    fulfillmentRate: number | null;
   };
 
-  const whMatchMap = new Map<string, { arrived: number | null; arrivalRate: number | null }>(
-    ((matchWarehouseArrival ?? []) as CsvRow[]).map((r: CsvRow) => {
-      const v = getValue(r, ["到岗率"]);
-      return [
-        getValue(r, ["仓库"]) || "未分类",
-        {
-          arrived: numberValue(getValue(r, ["实到"])),
-          arrivalRate: v === null || v === undefined || v === "" ? null : Number(v),
-        },
-      ] as [string, { arrived: number | null; arrivalRate: number | null }];
-    })
-  );
+  /* 仓库名归一化：中文"洛杉矶19号仓(TT)" vs 英文"Los Angeles Warehouse 19 (TT)"/"LA-21"
+     按编号+括号后缀匹配，如 19|TT */
+  const warehouseKey = (name: string): string => {
+    const num = name.match(/(\d+)/)?.[1] ?? "";
+    let suffix = name.match(/\(([^)]+)\)/)?.[1]?.toUpperCase().trim() ?? "";
+    const suffixMap: Record<string, string> = { "中邮": "CP" };
+    suffix = suffixMap[suffix] ?? suffix;
+    return `${num}|${suffix}`;
+  };
+  /* 到岗表仓库名（英文）-> 中文显示：Los Angeles-8 / LA-21 -> 洛杉矶8号仓 / 洛杉矶21号仓；(CP)->(中邮) */
+  const normalizeWarehouseDisplay = (name: string): string => {
+    const num = name.match(/(\d+)/)?.[1] ?? "";
+    if (!num) return name;
+    let suffix = name.match(/\(([^)]+)\)/)?.[1] ?? "";
+    if (suffix.toUpperCase() === "CP") suffix = "中邮";
+    let s = `洛杉矶${num}号仓`;
+    if (suffix) s += `(${suffix})`;
+    return s;
+  };
 
-  // 仓库表现改用发单详情口径（2026-10-07）：需求人数=已发单
-  const whAllocRows =
-    (warehouseAllocSummary ?? []).length > 0
-      ? warehouseAllocSummary
-      : warehouseSummary;
-  let warehouses: WarehouseRow[] =
-    whAllocRows.length > 0
-      ? (whAllocRows as CsvRow[]).map((row: CsvRow) => {
-          const name =
-            getValue(row, ["仓库", "需求仓", "物理仓"]) || "未分类";
-          const requested = numberValue(
-            getValue(row, ["需求人数", "供应商需派遣人数"])
-          );
-          const filled = numberValue(
-            getValue(row, ["已派遣人数", "供应商已派遣人数"])
-          );
-          const rate = requested > 0 ? (filled / requested) * 100 : 0;
-          const m = whMatchMap.get(name);
-          return {
-            name,
-            requested,
-            filled,
-            rate,
-            arrived: m?.arrived ?? null,
-            arrivalRate: m?.arrivalRate ?? null,
-          };
-        })
-      : [];
+  // 选定范围内按仓库汇总：发单（已发单/已派遣）+ 到岗（到岗/NoShow）
+  const allocByWh = new Map<string, Record<string, unknown>>(
+    sumByKey(
+      filterByDateRange(
+        ((allocDailyWarehouse ?? []) as CsvRow[]),
+        start,
+        end
+      ),
+      "仓库",
+      ["已发单人数", "已派遣人数", "未派遣人数"]
+    ).map((r) => [String(r["仓库"]), r])
+  );
+  // 到岗表按仓库：实际到场 + 已接受（按归一化key匹配中英文仓名）
+  const atWhMap = new Map<
+    string,
+    { actualArrived: number; accepted: number }
+  >();
+  for (const r of sumByKey(
+    filterByDateRange(
+      ((arrivalTrackingDailyWarehouse ?? []) as CsvRow[]),
+      start,
+      end
+    ),
+    "仓库",
+    ["到岗人次", "NoShow人次", "已接受人次"]
+  )) {
+    const key = warehouseKey(String(r["仓库"] ?? ""));
+    if (key && !key.startsWith("|")) {
+      // 同一个归一化 key 可能来自中英文两个原始仓名，要累加不能覆盖
+      const prev = atWhMap.get(key);
+      atWhMap.set(key, {
+        actualArrived:
+          (prev?.actualArrived ?? 0) +
+          Number(r["到岗人次"] ?? 0) -
+          Number(r["NoShow人次"] ?? 0),
+        accepted:
+          (prev?.accepted ?? 0) + Number(r["已接受人次"] ?? 0),
+      });
+    }
+  }
+  // 查不到带后缀的key时，回退到只按编号匹配
+  const findAtWhData = (name: string) => {
+    const key = warehouseKey(name);
+    return atWhMap.get(key) ?? atWhMap.get(key.split("|")[0] + "|") ?? null;
+  };
+
+  let warehouses: WarehouseRow[] = [...allocByWh.keys()].map((name) => {
+    const a = allocByWh.get(name)!;
+    const requested = Number(a["已发单人数"] ?? 0);
+    const filled = Number(a["已派遣人数"] ?? 0);
+    const rate = requested > 0 ? (filled / requested) * 100 : 0;
+    const at = findAtWhData(name);
+    // 没派人（已派遣=0）就一定没人到场：没到岗数据时按 0 算
+    const arrived = at?.actualArrived ?? (filled === 0 ? 0 : null);
+    const arrivalRate =
+      arrived !== null && filled > 0 ? (arrived / filled) * 100 : null;
+    const accepted = at?.accepted ?? (filled === 0 ? 0 : null);
+    return {
+      name,
+      requested,
+      filled,
+      rate,
+      arrived,
+      arrivalRate,
+      accepted,
+      fulfillmentRate:
+        accepted !== null && requested > 0
+          ? (accepted / requested) * 100
+          : null,
+    };
+  });
 
   warehouses = warehouses
     .filter((x) => x.name !== "未分类")
-    .sort((a, b) => b.rate - a.rate);
+    .sort(
+      (a, b) =>
+        (b.fulfillmentRate ?? -1) - (a.fulfillmentRate ?? -1)
+    );
 
   /* =======================================================
      Fulfillment Funnel (SOP 口径)
   ======================================================= */
 
-  // 到岗数据来自考勤表；lib/data.ts 需把 arrival_* 数据集暴露出来，
-  // 没有考勤数据时这些数组为空，漏斗回到"待数据"状态
-  const arrivalRows = arrivalSummary ?? [];
-  const arrivalPersons =
-    arrivalRows.length > 0
-      ? numberValue(
-          getValue(arrivalRows[0], [
-            "到岗人数",
-          ])
-        )
-      : null;
-  const arrivalEvents =
-    arrivalRows.length > 0
-      ? numberValue(
-          getValue(arrivalRows[0], [
-            "到岗人次",
-          ])
-        )
-      : null;
-  const arrivalWithHours =
-    arrivalRows.length > 0
-      ? numberValue(
-          getValue(arrivalRows[0], [
-            "有工时人数",
-          ])
-        )
-      : null;
-
-  // 应到岗明细：用人员到岗表口径（不再用老考勤数据）
-  const topArrivalWarehouses = (
-    arrivalTrackingWarehouse ?? []
-  )
-    .map((row) => ({
-      name:
-        getValue(row, ["仓库"]) ||
-        "未分类",
-      count: numberValue(
-        getValue(row, ["到岗人次"])
-      ),
-    }))
-    .filter((x) => x.name !== "未分类")
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
-
-  const topArrivalSuppliers = (
-    arrivalTrackingSupplier ?? []
-  )
-    .map((row) => ({
-      name:
-        getValue(row, ["供应商"]) ||
-        "未分类",
-      count: numberValue(
-        getValue(row, ["到岗人次"])
-      ),
-    }))
-    .filter((x) => x.name !== "未分类")
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
-
-  // 派遣状态口径的已确认/试工不通过/待确认（去重人数）
-  const acceptanceRows = acceptanceSummary ?? [];
-  const trialFailedPersons =
-    acceptanceRows.length > 0
-      ? numberValue(
-          getValue(acceptanceRows[0], [
-            "试工不通过人数",
-          ])
-        )
-      : null;
-  const pendingConfirmPersons =
-    acceptanceRows.length > 0
-      ? numberValue(
-          getValue(acceptanceRows[0], [
-            "待确认人数",
-          ])
-        )
-      : null;
-
-  // 已到岗/已接受：人员到岗表口径（用户确认）
+  // 选定范围内到岗合计：人员到岗表口径（用户确认）
   //   到岗 = NO SHOW 未勾选；已接受 = 到岗且无不符合要求原因
-  const atSummaryRows = arrivalTrackingSummary ?? [];
-  const atSummary = atSummaryRows[0] ?? {};
-  const atArrived = numberValue(getValue(atSummary, ["到岗人次"]));
-  const atAccepted = numberValue(getValue(atSummary, ["已接受人次"]));
-  const atNoShow = numberValue(getValue(atSummary, ["NoShow人次"]));
-  const atSentBack = numberValue(getValue(atSummary, ["被退回人次"]));
-  const hasAtData = atSummaryRows.length > 0;
+  const sumAt = (col: string) =>
+    atInRange.reduce((s, r) => s + numberValue(getValue(r, [col])), 0);
+  const atArrived = sumAt("到岗人次");
+  const atAccepted = sumAt("已接受人次");
+  const atNoShow = sumAt("NoShow人次");
+  const atSentBack = sumAt("被退回人次");
+  const hasAtData = atInRange.length > 0;
+
+  // 应到岗明细：选定范围内按仓库/供应商汇总（到岗人次 Top 5）
+  // 仓库名统一成“洛杉矶X号仓”：到岗表英文仓名（Los Angeles-8 / LA-9 等）先转中文再按名汇总，同一仓不同写法合并
+  const topArrivalWarehouses = (() => {
+    const m = new Map<string, number>();
+    for (const r of sumByKey(
+      filterByDateRange(
+        ((arrivalTrackingDailyWarehouse ?? []) as CsvRow[]),
+        start,
+        end
+      ),
+      "仓库",
+      ["到岗人次"]
+    )) {
+      const display = normalizeWarehouseDisplay(
+        String(r["仓库"] ?? "未分类")
+      );
+      m.set(display, (m.get(display) ?? 0) + Number(r["到岗人次"] ?? 0));
+    }
+    return [...m.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .filter((x) => x.name !== "未分类")
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  })();
+
+  const topArrivalSuppliers = sumByKey(
+    filterByDateRange(
+      ((arrivalTrackingDailySupplier ?? []) as CsvRow[]),
+      start,
+      end
+    ),
+    "供应商",
+    ["到岗人次"]
+  )
+    .map((r) => ({
+      name: String(r["供应商"] ?? "未分类"),
+      count: Number(r["到岗人次"] ?? 0),
+    }))
+    .filter((x) => x.name !== "未分类")
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  /* =======================================================
+     Management Alerts 数据（传给 Funnel，放在流失分析下方折叠区）
+  ======================================================= */
+
+  // 未满足需求 = 需求 − 已接受（需求最终没人上岗的岗位数；为负时按 0 计）
+  const totalUnfilled = Math.max(0, totalDemand - atAccepted);
+
+  const lowestSupplier =
+    suppliers.length > 0
+      ? [...suppliers].sort(
+          (a, b) =>
+            (a.fulfillmentRate ?? Infinity) -
+            (b.fulfillmentRate ?? Infinity)
+        )[0]
+      : null;
+
+  const lowestWarehouse =
+    warehouses.length > 0
+      ? [...warehouses].sort(
+          (a, b) =>
+            (a.fulfillmentRate ?? Infinity) -
+            (b.fulfillmentRate ?? Infinity)
+        )[0]
+      : null;
+
   const funnelData: FunnelData = {
     requested: totalDemand,
     issued: totalRequested,
@@ -576,8 +494,8 @@ export default function Home() {
     arrivedEvents: hasAtData ? atArrived : null,
     arrivedWithHours: null,
     accepted: hasAtData ? atAccepted : null,
-    trialFailed: trialFailedPersons,
-    pendingConfirm: pendingConfirmPersons,
+    trialFailed: null,
+    pendingConfirm: null,
     noShowPending: hasAtData ? atNoShow : null,
     sentBack: hasAtData ? atSentBack : null,
     topWarehouses: [...warehouses]
@@ -593,127 +511,80 @@ export default function Home() {
       .slice(0, 5),
     topArrivalWarehouses,
     topArrivalSuppliers,
+    unfilled: totalUnfilled,
+    lowestWarehouseName: lowestWarehouse?.name ?? null,
+    lowestWarehouseRate: lowestWarehouse?.fulfillmentRate ?? null,
+    lowestSupplierName: lowestSupplier?.name ?? null,
+    lowestSupplierRate: lowestSupplier?.fulfillmentRate ?? null,
   };
 
   /* =======================================================
-     Trial Failure Rankings
+     Trial Failure Rankings → 改为被退回口径（人员到岗数据）
   ======================================================= */
 
-  const trialWarehouses =
-    trialFailureWarehouse
-      .map((row) => ({
-        name:
-          getValue(row, [
-            "物理仓",
-            "需求仓",
-            "仓库",
-          ]) || "未分类",
+  const trialWarehouses = (() => {
+    const m = new Map<string, number>();
+    for (const r of sumByKey(
+      filterByDateRange(
+        ((arrivalTrackingDailyWarehouse ?? []) as CsvRow[]),
+        start,
+        end
+      ),
+      "仓库",
+      ["被退回人次"]
+    )) {
+      const display = normalizeWarehouseDisplay(String(r["仓库"] ?? "未分类"));
+      m.set(display, (m.get(display) ?? 0) + Number(r["被退回人次"] ?? 0));
+    }
+    return [...m.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .filter((x) => x.name !== "未分类")
+      .sort((a, b) => b.count - a.count);
+  })();
 
-        count: numberValue(
-          getValue(row, [
-            "试工不通过人数",
-            "试工不通过",
-          ])
-        ),
-      }))
-      .filter(
-        (x) => x.name !== "未分类"
-      )
-      .sort(
-        (a, b) =>
-          b.count - a.count
-      );
+  const trialSuppliers = sumByKey(
+    filterByDateRange(
+      ((arrivalTrackingDailySupplier ?? []) as CsvRow[]),
+      start,
+      end
+    ),
+    "供应商",
+    ["被退回人次"]
+  )
+    .map((r) => ({
+      name: String(r["供应商"] ?? "未分类"),
+      count: Number(r["被退回人次"] ?? 0),
+    }))
+    .filter((x) => x.name !== "未分类")
+    .sort((a, b) => b.count - a.count);
 
-  const trialSuppliers =
-    trialFailureSupplier
-      .map((row) => ({
-        name:
-          getValue(row, [
-            "供应商名称",
-            "供应商",
-          ]) || "未分类",
-
-        count: numberValue(
-          getValue(row, [
-            "试工不通过人数",
-            "试工不通过",
-          ])
-        ),
-      }))
-      .filter(
-        (x) => x.name !== "未分类"
-      )
-      .sort(
-        (a, b) =>
-          b.count - a.count
-      );
+  const trialFailureCount = trialSuppliers.reduce(
+    (s, r) => s + r.count,
+    0
+  );
 
   /* =======================================================
      Data Quality
   ======================================================= */
 
-  const missingSupplierAllocations =
-    allocation.filter(
-      (row) =>
-        !getValue(
-          row,
-          ["供应商"]
-        ).trim()
-    ).length;
+  const missingSupplierAllocations = (
+    (allocation ?? []) as CsvRow[]
+  ).filter(
+    (row) =>
+      !getValue(row, ["供应商"]).trim() &&
+      (!start || !end ||
+        (getValue(row, ["需求日期"]) >= start &&
+          getValue(row, ["需求日期"]) <= end))
+  ).length;
 
   /* =======================================================
      Reporting Period
   ======================================================= */
 
-  const demandDates = demand
-    .map((row) =>
-      getValue(row, [
-        "需求日期",
-        "日期",
-      ])
-    )
-    .filter(Boolean)
-    .sort();
-
-  const startDate =
-    demandDates[0] || "";
-
-  const endDate =
-    demandDates[
-      demandDates.length - 1
-    ] || "";
-
   const periodLabel =
-    startDate && endDate
-      ? `${formatDateLabel(
-          startDate
-        )} — ${formatDateLabel(
-          endDate
-        )}`
+    start && end
+      ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
       : "统计周期不可用 Reporting Period unavailable";
-
-  /* =======================================================
-     Management Alerts
-  ======================================================= */
-
-  const lowestSupplier =
-    suppliers.length > 0
-      ? [...suppliers].sort(
-          (a, b) =>
-            a.rate - b.rate
-        )[0]
-      : null;
-
-  const lowestWarehouse =
-    warehouses.length > 0
-      ? [...warehouses].sort(
-          (a, b) =>
-            a.rate - b.rate
-        )[0]
-      : null;
-
-  const topTrialWarehouse =
-    trialWarehouses[0] ?? null;
 
   /* =======================================================
      UI
@@ -784,19 +655,210 @@ export default function Home() {
 
         <div className="px-5 py-7 md:px-8">
 
+          {/* 日期筛选 */}
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <DateRangePicker start={start} end={end} min={min} max={max} />
+          </div>
+
           {/* =================================================
-              FULFILLMENT FUNNEL (SOP) — 首页先放漏斗
+              指标 METRICS + SOP 比率卡片（最上面）
           ================================================= */}
 
           <section>
             <div className="mb-4">
-              <p className="text-xs font-semibold uppercase tracking-widest text-indigo-500">
+              <p className="text-sm font-semibold uppercase tracking-widest text-indigo-500">
                 指标 Metrics
               </p>
+            </div>
+          <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {[
+              {
+                zh: "派遣率",
+                en: "Dispatch Rate",
+                value:
+                  totalRequested > 0
+                    ? formatPercent(
+                        (totalFilled / totalRequested) *
+                          100
+                      )
+                    : "N/A",
+                formula: `已派遣 ÷ 已发单 = ${formatNumber(
+                  totalFilled
+                )} ÷ ${formatNumber(totalRequested)}`,
+                plain:
+                  totalRequested > 0
+                    ? `每 100 个已发单人次，约 ${Math.round(
+                        (totalFilled / totalRequested) *
+                          100
+                      )} 人次实际派出。`
+                    : "待发单数据：分母需要发单详情。",
+                ok: totalRequested > 0,
+              },
+              {
+                zh: "接受率",
+                en: "Acceptance Rate",
+                value:
+                  hasAtData && atArrived > 0
+                    ? formatPercent(
+                        (atAccepted / atArrived) *
+                          100
+                      )
+                    : "N/A",
+                formula: hasAtData
+                  ? `已接受 ÷ 应到岗 = ${formatNumber(
+                      atAccepted
+                    )} ÷ ${formatNumber(atArrived)}`
+                  : "已接受 ÷ 应到岗",
+                plain: hasAtData
+                  ? `每 100 个应到岗的人，约 ${Math.round(
+                      atArrived > 0
+                        ? (atAccepted / atArrived) *
+                            100
+                        : 0
+                    )} 人最终上岗。`
+                  : "待数据：分子需要已接受的人数。",
+                ok: hasAtData,
+              },
+              {
+                zh: "需求满足率",
+                en: "Demand Fulfillment",
+                value:
+                  hasAtData && totalDemand > 0
+                    ? formatPercent(
+                        (atAccepted / totalDemand) *
+                          100
+                      )
+                    : "N/A",
+                formula: hasAtData
+                  ? `已接受 ÷ 需求 = ${formatNumber(
+                      atAccepted
+                    )} ÷ ${formatNumber(totalDemand)}`
+                  : "已接受 ÷ 需求",
+                plain:
+                  hasAtData && totalDemand > 0
+                    ? `每 100 个需求名额，最终约 ${Math.round(
+                        (atAccepted / totalDemand) *
+                          100
+                      )} 人上岗。`
+                    : "待数据：分子需要已接受的人数。",
+                ok: hasAtData,
+              },
+            ].map((m) => (
+              <div
+                key={m.en}
+                className="group relative rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+              >
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  {m.zh} {m.en}
+                </p>
+                <p
+                  className={`mt-3 text-3xl font-bold tracking-tight tabular-nums ${
+                    m.ok
+                      ? "text-slate-900"
+                      : "text-slate-300"
+                  }`}
+                >
+                  {m.value}
+                </p>
+                <p className="mt-2 font-mono text-xs text-slate-500">
+                  {m.formula}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  {m.plain}
+                </p>
+              </div>
+            ))}
+          </div>
+          </section>
 
-              <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
+          {/* =================================================
+              需求 Demand（真实地图：Leaflet + OpenStreetMap 瓦片，气泡=需求量，颜色=达成率）
+          ================================================= */}
+
+          <section className="mt-6">
+            <div className="mb-4">
+              <p className="text-sm font-semibold uppercase tracking-widest text-indigo-500">
+                需求 Demand
+              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                哪里要人多，一眼看出来。圈越大，要的人越多；绿的做得好，红的要盯紧。
+                <br />
+                See where demand is highest at a glance. Bigger bubble = more demand; green is on track, red needs attention.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+                <div>
+                  <h3 className="font-bold text-slate-900">
+                    各仓库需求分布 Demand by Warehouse
+                  </h3>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    数据来源：用工需求池（发单详情） Source: Labor Demand Pool
+                  </p>
+                </div>
+                <Link
+                  href="/warehouse"
+                  className="rounded-lg bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-indigo-50 hover:text-indigo-600"
+                >
+                  查看全部 View All →
+                </Link>
+              </div>
+              <div className="p-6">
+                {(() => {
+                  const locations = [
+                    { ids: "CA #1 · #17", nums: [1, 17], address: "1375 E Locust St, Ontario", lat: 34.04666, lng: -117.62496 },
+                    { ids: "CA #2 · #8", nums: [2, 8], address: "2221 E Remington Ave, Chino", lat: 33.97743, lng: -117.60234 },
+                    { ids: "CA #5", nums: [5], address: "13725 Pipeline Ave, Chino", lat: 34.00215, lng: -117.71408 },
+                    { ids: "CA #6", nums: [6], address: "14310 Ramona Ave, Chino", lat: 33.99265, lng: -117.70765 },
+                    { ids: "CA #7", nums: [7], address: "4705 Walker Ave, Ontario", lat: 33.98731, lng: -117.61782 },
+                    { ids: "LA #9 · #27", nums: [9, 27], address: "171 Marcellin Dr, City of Industry", lat: 34.0108, lng: -117.82885 },
+                    { ids: "CA #10", nums: [10], address: "14779 Bar Harbor Rd, Fontana", lat: 34.11589, lng: -117.48169 },
+                    { ids: "CA #18 · #19", nums: [18, 19], address: "1420 Tamarind Ave, Rialto", lat: 34.12497, lng: -117.42297 },
+                    { ids: "CA #20", nums: [20], address: "11296 Harrel St, Jurupa Valley", lat: 34.0096, lng: -117.53005 },
+                    { ids: "CA #21", nums: [21], address: "8375 Sultana Ave, Fontana", lat: 34.10416, lng: -117.46729 },
+                    { ids: "CA #25", nums: [25], address: "11260 Cedar Ave, Bloomington", lat: 34.05051, lng: -117.39859 },
+                    { ids: "CA #28", nums: [28], address: "855 W Valley Blvd, Bloomington", lat: 34.06977, lng: -117.38558 },
+                    { ids: "CA #29", nums: [29], address: "5331 S Carpenter Ave, Ontario", lat: 33.98694, lng: -117.60688 },
+                    { ids: "CA #30", nums: [30], address: "21661 Barton Rd, Colton", lat: 34.03373, lng: -117.33186 },
+                    { ids: "CA #31", nums: [31], address: "1002 S Carnegie Ave, Ontario", lat: 34.0528, lng: -117.57008 },
+                  ];
+                  const points = locations.map((loc) => {
+                    const matched = warehouses.filter((w) => {
+                      const n = Number(w.name.match(/(\d+)/)?.[1] ?? -1);
+                      return loc.nums.includes(n);
+                    });
+                    const demand = matched.reduce((s, w) => s + w.requested, 0);
+                    const accepted = matched.reduce((s, w) => s + (w.accepted ?? 0), 0);
+                    const fulfillment = demand > 0 ? (accepted / demand) * 100 : null;
+                    return { ...loc, demand, accepted, fulfillment };
+                  });
+                  const maxDemand = Math.max(1, ...points.map((p) => p.demand));
+                  const mapHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><style>html,body,#map{height:100%;margin:0;padding:0}#map{background:#e8eef5}</style></head><body><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>var points=${JSON.stringify(points)};var maxDemand=${maxDemand};var map=L.map('map').setView([34.05,-117.58],10);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap contributors'}).addTo(map);var bounds=[];points.forEach(function(p){var color=p.fulfillment===null?'#94a3b8':p.fulfillment>=60?'#10b981':p.fulfillment>=40?'#f59e0b':'#f43f5e';var r=p.demand>0?6+(p.demand/maxDemand)*14:6;var c=L.circleMarker([p.lat,p.lng],{radius:r,fillColor:color,color:'#fff',weight:2,fillOpacity:0.85}).addTo(map);c.bindPopup('<b>'+p.ids+'</b><br>'+p.address+'<br>需求 '+p.demand+' · 已接受 '+p.accepted+' · '+(p.fulfillment!==null?'达成率 '+p.fulfillment.toFixed(1)+'%':'达成率 —'));bounds.push([p.lat,p.lng]);});if(bounds.length){map.fitBounds(bounds,{padding:[16,16]});}</script></body></html>`;
+                  return (
+                    <div>
+                      <iframe
+                        title="仓库地理分布 Warehouse Map"
+                        srcDoc={mapHtml}
+                        className="w-full rounded-xl border border-slate-200"
+                        style={{ height: "460px" }}
+                      />
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+                        <span>气泡大小(Bubble size) = 需求量(demand)</span>
+                        <span>绿 ≥60% · 黄 40-60% · 红 &lt;40% · 灰 无数据</span>
+                        <span>同一地址多仓合并为一个点</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </section>
+
+          <section className="mt-6">
+            <div className="mb-4">
+              <p className="text-sm font-semibold uppercase tracking-widest text-indigo-500">
                 需求履约 Demand Fulfillment
-              </h2>
+              </p>
 
               <p className="mt-2 text-sm leading-6 text-slate-500">
                 从需求到上岗的完整链条：仓库发需求 →
@@ -818,15 +880,125 @@ export default function Home() {
               </p>
             </div>
 
+
             <Funnel data={funnelData} />
           </section>
 
 
           {/* =================================================
-              SUPPLIER + MANAGEMENT ALERTS
+              ACCEPTED COUNT
           ================================================= */}
 
-          <section className="mt-6 grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+          <section className="mt-6">
+
+            <div className="grid gap-4 md:grid-cols-3">
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  已接受人数 Accepted
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-slate-900">
+                  {formatNumber(atAccepted)}{" "}
+                  <span className="text-sm font-medium text-slate-400">
+                    人
+                  </span>
+                </p>
+
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  需求满足率 Demand Fulfillment
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-slate-900">
+                  {hasAtData && totalDemand > 0
+                    ? formatPercent(
+                        (atAccepted / totalDemand) * 100
+                      )
+                    : "N/A"}
+                </p>
+
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  未满足需求 Unfilled Demand
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-slate-900">
+                  {formatNumber(totalUnfilled)}{" "}
+                  <span className="text-sm font-medium text-slate-400">
+                    人
+                  </span>
+                </p>
+
+              </div>
+
+            </div>
+
+            {/* 已接受 vs 未满足 可视化条 */}
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-emerald-600">
+                  已接受 Accepted {formatNumber(atAccepted)} 人
+                </span>
+                <span className="font-semibold text-rose-600">
+                  未满足 Unfilled {formatNumber(totalUnfilled)} 人
+                </span>
+              </div>
+              <div className="mt-2 flex h-3 overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="h-full bg-emerald-500"
+                  style={{
+                    width: `${
+                      hasAtData && totalDemand > 0
+                        ? Math.min(
+                            100,
+                            Math.max(
+                              0,
+                              (atAccepted / totalDemand) * 100
+                            )
+                          )
+                        : 0
+                    }%`,
+                  }}
+                />
+                <div
+                  className="h-full bg-rose-400"
+                  style={{
+                    width: `${
+                      hasAtData && totalDemand > 0
+                        ? Math.min(
+                            100,
+                            Math.max(
+                              0,
+                              (totalUnfilled / totalDemand) * 100
+                            )
+                          )
+                        : 0
+                    }%`,
+                  }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-slate-400">
+                {hasAtData && totalDemand > 0
+                  ? `需求 Demand ${formatNumber(totalDemand)} 人`
+                  : "待数据 Pending：需要到岗数据才能算。"}
+              </p>
+            </div>
+
+          </section>
+
+          {/* =================================================
+              SUPPLIER + WAREHOUSE
+          ================================================= */}
+
+          <section className="mt-6 grid gap-6 lg:grid-cols-2">
 
             {/* Supplier */}
 
@@ -977,7 +1149,7 @@ export default function Home() {
 
             </div>
 
-            {/* Management Alerts */}
+            {/* Warehouse */}
 
             <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
 
@@ -986,447 +1158,140 @@ export default function Home() {
                 <div>
 
                   <h3 className="font-bold text-slate-900">
-                    管理预警 Management Alerts
+                    仓库表现 Warehouse Performance
                   </h3>
 
                   <p className="mt-1 text-xs text-slate-400">
-                    需要运营关注的事项 Areas for review
+                    按需求满足率排名 Ranked by Demand Fulfillment Rate
+                  </p>
+
+                  <p className="mt-0.5 text-[11px] text-slate-400">
+                    数据来源：用工需求池（发单详情） Source: Labor Demand Pool
                   </p>
 
                 </div>
 
-              </div>
-
-              <div className="space-y-3 p-5">
-
-                {/* Unfilled */}
-
-                <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-4">
-
-                  <div className="flex items-start">
-
-                    <AlertIcon type="danger" />
-
-                    <div className="ml-3">
-
-                      <p className="text-sm font-semibold text-slate-800">
-                        未满足需求 Unfilled Demand
-                      </p>
-
-                      <p className="mt-1 text-xs leading-5 text-slate-500">
-                        仍有{" "}
-                        {formatNumber(totalUnfilled)}{" "}
-                        个岗位未被满足（
-                        {formatNumber(totalUnfilled)}{" "}
-                        positions remain unfilled）。
-                      </p>
-
-                    </div>
-
-                  </div>
-
-                </div>
-
-                {/* 需求日到场率 */}
-
-                {hasAtData && totalDemand > 0 && (
-                  <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
-
-                    <div className="flex items-start">
-
-                      <AlertIcon type="info" />
-
-                      <div className="ml-3">
-
-                        <p className="text-sm font-semibold text-slate-800">
-                          需求日到场率 Scheduled Arrival Rate
-                        </p>
-
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          应到岗{" "}
-                          {formatNumber(atArrived)}{" "}
-                          人中，扣除 No Show 后实际到场{" "}
-                          <span className="font-semibold text-blue-700">
-                            {formatNumber(
-                              atArrived - atNoShow
-                            )}
-                          </span>{" "}
-                          人，到场率{" "}
-                          <span className="font-semibold text-blue-700">
-                            {formatPercent(
-                              atArrived > 0
-                                ? ((atArrived - atNoShow) /
-                                    atArrived) *
-                                    100
-                                : 0
-                            )}
-                          </span>
-                          。
-                        </p>
-
-                      </div>
-
-                    </div>
-
-                  </div>
-                )}
-
-                {/* Missing Supplier */}
-
-                {missingSupplierAllocations > 0 && (
-                  <Link
-                    href="/quality"
-                    className="block rounded-xl border border-amber-100 bg-amber-50/60 p-4 transition hover:border-amber-200 hover:bg-amber-50"
-                  >
-
-                    <div className="flex items-start">
-
-                      <AlertIcon type="warning" />
-
-                      <div className="ml-3">
-
-                        <p className="text-sm font-semibold text-slate-800">
-                          供应商归属缺失 Missing Supplier Attribution
-                        </p>
-
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          {formatNumber(missingSupplierAllocations)}{" "}
-                          条调配记录缺少供应商名称（
-                          {formatNumber(missingSupplierAllocations)}{" "}
-                          allocation records have no supplier name）。
-                        </p>
-
-                      </div>
-
-                    </div>
-
-                  </Link>
-                )}
-
-                {/* Trial Failure */}
-
                 <Link
-                  href="/trial"
-                  className="block rounded-xl border border-violet-100 bg-violet-50/60 p-4 transition hover:border-violet-200 hover:bg-violet-50"
+                  href="/warehouse"
+                  className="rounded-lg bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-indigo-50 hover:text-indigo-600"
                 >
-
-                  <div className="flex items-start">
-
-                    <AlertIcon type="info" />
-
-                    <div className="ml-3">
-
-                      <p className="text-sm font-semibold text-slate-800">
-                        试工不通过 Trial Failure
-                      </p>
-
-                      <p className="mt-1 text-xs leading-5 text-slate-500">
-                        发现{" "}
-                        {formatNumber(trialFailureCount)}{" "}
-                        条试工不通过记录（
-                        {formatNumber(trialFailureCount)}{" "}
-                        trial-failure records identified）。
-                      </p>
-
-                    </div>
-
-                  </div>
-
+                  查看全部 View All →
                 </Link>
 
-                {/* No Show */}
-
-                {hasAtData && (
-                  <div className="rounded-xl border border-orange-100 bg-orange-50/60 p-4">
-
-                    <div className="flex items-start">
-
-                      <AlertIcon type="warning" />
-
-                      <div className="ml-3">
-
-                        <p className="text-sm font-semibold text-slate-800">
-                          No Show 未到岗 No-Show
-                        </p>
-
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          应到岗{" "}
-                          {formatNumber(atArrived)}{" "}
-                          人中有{" "}
-                          <span className="font-semibold text-orange-700">
-                            {formatNumber(atNoShow)}
-                          </span>{" "}
-                          人没来，No Show 率{" "}
-                          <span className="font-semibold text-orange-700">
-                            {formatPercent(
-                              atArrived > 0
-                                ? (atNoShow / atArrived) * 100
-                                : 0
-                            )}
-                          </span>
-                          （{formatNumber(atNoShow)} of{" "}
-                          {formatNumber(atArrived)}{" "}
-                          scheduled did not show up）。
-                        </p>
-
-                      </div>
-
-                    </div>
-
-                  </div>
-                )}
-
-                {/* Lowest Warehouse */}
-
-                {lowestWarehouse && (
-                  <Link
-                    href="/warehouse"
-                    className="block rounded-xl border border-amber-100 bg-amber-50/60 p-4 transition hover:border-amber-200 hover:bg-amber-50"
-                  >
-
-                    <div className="flex items-start">
-
-                      <AlertIcon type="warning" />
-
-                      <div className="ml-3">
-
-                        <p className="text-sm font-semibold text-slate-800">
-                          仓库达成情况 Warehouse Fulfillment
-                        </p>
-
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          {lowestWarehouse.name} 达成率最低，为{" "}
-                          <span className="font-semibold text-amber-700">
-                            {formatPercent(lowestWarehouse.rate)}
-                          </span>
-                          （{lowestWarehouse.name} has the lowest fill
-                          rate at {formatPercent(lowestWarehouse.rate)}
-                          ）。
-                        </p>
-
-                      </div>
-
-                    </div>
-
-                  </Link>
-                )}
-
-                {/* Lowest Supplier */}
-
-                {lowestSupplier && (
-                  <Link
-                    href="/supplier"
-                    className="block rounded-xl border border-slate-100 bg-slate-50 p-4 transition hover:bg-slate-100"
-                  >
-
-                    <div className="flex items-start">
-
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-200 text-slate-600">
-                        ↓
-                      </div>
-
-                      <div className="ml-3">
-
-                        <p className="text-sm font-semibold text-slate-800">
-                          供应商表现 Supplier Performance
-                        </p>
-
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          {lowestSupplier.name} 供应商达成率最低，为{" "}
-                          <span className="font-semibold text-slate-700">
-                            {formatPercent(lowestSupplier.rate)}
-                          </span>
-                          （{lowestSupplier.name} has the lowest
-                          supplier fill rate at{" "}
-                          {formatPercent(lowestSupplier.rate)}）。
-                        </p>
-
-                      </div>
-
-                    </div>
-
-                  </Link>
-                )}
-
               </div>
 
-            </div>
+              <div className="divide-y divide-slate-100">
 
-          </section>
+                {warehouses
+                  .slice(0, 7)
+                  .map((warehouse, index) => (
 
-          {/* =================================================
-              WAREHOUSE
-          ================================================= */}
+                    <div
+                      key={`${warehouse.name}-${index}`}
+                      className="px-6 py-4"
+                    >
 
-          <section className="mt-6 rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+                      <div className="flex items-center gap-4">
 
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-500">
+                          {index + 1}
+                        </div>
 
-              <div>
+                        <div className="min-w-0 flex-1">
 
-                <h3 className="font-bold text-slate-900">
-                  仓库表现 Warehouse Performance
-                </h3>
+                          <div className="mb-2 flex items-center justify-between">
 
-                <p className="mt-1 text-xs text-slate-400">
-                  按派遣率排名 Ranked by Dispatched Rate
-                </p>
+                            <p className="truncate text-sm font-semibold text-slate-800">
+                              {warehouse.name}
+                            </p>
 
-                <p className="mt-0.5 text-[11px] text-slate-400">
-                  数据来源：用工需求池（发单详情） Source: Labor Demand Pool
-                </p>
+                            <p className="ml-4 text-sm font-bold text-slate-900">
+                              {warehouse.fulfillmentRate !==
+                              null
+                                ? formatPercent(
+                                    warehouse.fulfillmentRate
+                                  )
+                                : "—"}
+                            </p>
 
-              </div>
+                          </div>
 
-              <Link
-                href="/warehouse"
-                className="rounded-lg bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-indigo-50 hover:text-indigo-600"
-              >
-                查看全部 View All →
-              </Link>
+                          <MiniBar
+                            value={
+                              warehouse.fulfillmentRate ??
+                              0
+                            }
+                            max={100}
+                          />
 
-            </div>
+                          <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-400">
 
-            <div className="overflow-x-auto">
+                            <span>
+                              {formatNumber(warehouse.requested)}{" "}
+                              已发单 Issued
+                            </span>
 
-              <table className="w-full min-w-[700px]">
-
-                <thead>
-
-                  <tr className="border-b border-slate-100 text-left">
-
-                    <th className="px-6 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      仓库 Warehouse
-                    </th>
-
-                    <th className="px-6 py-3 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      需求 Requested
-                    </th>
-
-                    <th className="px-6 py-3 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      已派遣 Dispatched
-                    </th>
-
-                    <th className="px-6 py-3 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      未派遣 Undispatched
-                    </th>
-
-                    <th className="px-6 py-3 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      派遣率 Dispatched Rate
-                    </th>
-
-                    <th className="px-6 py-3 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      到场率 Arrival Rate
-                      <span className="mt-0.5 block text-[9px] font-normal normal-case tracking-normal text-slate-400">
-                        实际到场 ÷ 已派遣
-                      </span>
-                    </th>
-
-                  </tr>
-
-                </thead>
-
-                <tbody>
-
-                  {warehouses
-                    .slice(0, 10)
-                    .map((warehouse, index) => {
-
-                      const unfilled =
-                        warehouse.requested -
-                        warehouse.filled;
-
-                      return (
-                        <tr
-                          key={`${warehouse.name}-${index}`}
-                          className="border-b border-slate-50 last:border-0 hover:bg-slate-50/70"
-                        >
-
-                          <td className="px-6 py-4">
-
-                            <div className="flex items-center">
-
-                              <div className="mr-3 flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-[11px] font-bold text-slate-500">
-                                {index + 1}
-                              </div>
-
-                              <span className="text-sm font-semibold text-slate-700">
-                                {warehouse.name}
-                              </span>
-
-                            </div>
-
-                          </td>
-
-                          <td className="px-6 py-4 text-right text-sm text-slate-600">
-                            {formatNumber(warehouse.requested)}
-                          </td>
-
-                          <td className="px-6 py-4 text-right text-sm font-semibold text-emerald-600">
-                            {formatNumber(warehouse.filled)}
-                          </td>
-
-                          <td className="px-6 py-4 text-right text-sm font-medium text-rose-500">
-                            {formatNumber(Math.max(unfilled, 0))}
-                          </td>
-
-                          <td className="px-6 py-4">
-
-                            <div className="flex items-center justify-end gap-3">
-
-                              <div className="hidden w-20 sm:block">
-
-                                <MiniBar
-                                  value={warehouse.rate}
-                                  max={100}
-                                />
-
-                              </div>
-
-                              <span
-                                className={`w-14 text-right text-sm font-bold ${
-                                  warehouse.rate >= 80
-                                    ? "text-emerald-600"
-                                    : warehouse.rate >= 60
-                                      ? "text-amber-600"
-                                      : "text-rose-600"
-                                }`}
-                              >
-                                {formatPercent(warehouse.rate)}
-                              </span>
-
-                            </div>
-
-                          </td>
-
-                          <td className="px-6 py-4 text-right">
-                            {warehouse.arrivalRate !== null ? (
-                              <span
-                                className={`text-sm font-bold ${
-                                  warehouse.arrivalRate > 115 ||
-                                  warehouse.arrivalRate < 70
-                                    ? "text-amber-600"
-                                    : "text-slate-700"
-                                }`}
-                              >
+                            <span>
+                              {formatNumber(warehouse.filled)}{" "}
+                              已派遣 Dispatched
+                              <span className="text-slate-500">
+                                {" "}
+                                (
                                 {formatPercent(
-                                  warehouse.arrivalRate
+                                  warehouse.rate
+                                )}
+                                )
+                              </span>
+                            </span>
+
+                            {warehouse.arrived !== null && (
+                              <span>
+                                {formatNumber(
+                                  warehouse.arrived
+                                )}{" "}
+                                实际到场 Arrived
+                                {warehouse.arrivalRate !== null && (
+                                  <span
+                                    className={
+                                      warehouse.arrivalRate >
+                                        115 ||
+                                      warehouse.arrivalRate <
+                                        70
+                                        ? "font-semibold text-amber-600"
+                                        : "text-slate-500"
+                                    }
+                                  >
+                                    {" "}
+                                    (
+                                    {formatPercent(
+                                      warehouse.arrivalRate
+                                    )}
+                                    )
+                                  </span>
                                 )}
                               </span>
-                            ) : (
-                              <span className="text-sm text-slate-300">
-                                —
+                            )}
+
+                            {warehouse.accepted !== null && (
+                              <span className="font-medium text-emerald-600">
+                                {formatNumber(
+                                  warehouse.accepted
+                                )}{" "}
+                                已接受 Accepted
                               </span>
                             )}
-                          </td>
 
-                        </tr>
-                      );
-                    })}
+                          </div>
 
-                </tbody>
+                        </div>
 
-              </table>
+                      </div>
+
+                    </div>
+
+                  ))}
+
+              </div>
 
             </div>
 
@@ -1438,7 +1303,7 @@ export default function Home() {
 
           <section className="mt-6 grid gap-6 lg:grid-cols-2">
 
-            {/* Warehouse */}
+            {/* Supplier */}
 
             <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
 
@@ -1447,11 +1312,11 @@ export default function Home() {
                 <div>
 
                   <h3 className="font-bold text-slate-900">
-                    各仓库试工不通过 Trial Failure by Warehouse
+                    各供应商被退回 Sent Back by Supplier
                   </h3>
 
                   <p className="mt-1 text-[11px] text-slate-400">
-                    数据来源：临时工派遣表格 Source: Temp Dispatch Records
+                    共被退回 {formatNumber(trialFailureCount)} 人次 · 数据来源：人员到岗表 Source: Arrival Tracking
                   </p>
 
                 </div>
@@ -1466,53 +1331,96 @@ export default function Home() {
               </div>
 
               <div className="p-6">
-
-                <div className="space-y-4">
-
-                  {trialWarehouses
-                    .slice(0, 7)
-                    .map((item, index) => {
-
-                      const max =
-                        trialWarehouses[0]?.count || 1;
-
+                {/* Top 3 放大卡 */}
+                <div className="grid gap-3 grid-cols-3">
+                  {trialSuppliers.slice(0, 3).map((item, index) => {
+                    const max = trialSuppliers[0]?.count || 1;
+                    const share =
+                      trialFailureCount > 0
+                        ? (item.count / trialFailureCount) * 100
+                        : 0;
+                    const rankBg =
+                      index === 0
+                        ? "#e11d48"
+                        : index === 1
+                          ? "#f43f5e"
+                          : "#fb7185";
+                    return (
+                      <div
+                        key={`${item.name}-${index}`}
+                        className="rounded-xl border border-rose-100 bg-rose-50/60 p-3"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span
+                            className="flex h-7 w-7 items-center justify-center rounded-lg text-xs font-bold text-white"
+                            style={{ backgroundColor: rankBg }}
+                          >
+                            {index + 1}
+                          </span>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-rose-600">
+                            {formatPercent(share)}
+                          </span>
+                        </div>
+                        <p
+                          className="mt-2 truncate text-sm font-semibold text-slate-800"
+                          title={item.name}
+                        >
+                          {item.name}
+                        </p>
+                        <p className="mt-1 text-2xl font-bold text-rose-600">
+                          {formatNumber(item.count)}{" "}
+                          <span className="text-xs font-medium text-slate-400">
+                            人次
+                          </span>
+                        </p>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
+                          <div
+                            className="h-full rounded-full bg-rose-400"
+                            style={{
+                              width: `${(item.count / max) * 100}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* 其余列表 4-7 */}
+                {trialSuppliers.slice(3, 7).length > 0 && (
+                  <div className="mt-5 space-y-4">
+                    {trialSuppliers.slice(3, 7).map((item, index) => {
+                      const max = trialSuppliers[0]?.count || 1;
                       return (
-                        <div key={`${item.name}-${index}`}>
-
+                        <div key={`${item.name}-${index + 3}`}>
                           <div className="mb-1.5 flex items-center justify-between">
-
-                            <span className="text-sm font-medium text-slate-600">
-                              {item.name}
+                            <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-600">
+                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[11px] font-bold text-slate-500">
+                                {index + 4}
+                              </span>
+                              <span className="truncate">{item.name}</span>
                             </span>
-
-                            <span className="text-sm font-bold text-slate-800">
+                            <span className="ml-3 shrink-0 text-sm font-bold text-slate-800">
                               {formatNumber(item.count)}
                             </span>
-
                           </div>
-
                           <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-
                             <div
                               className="h-full rounded-full bg-rose-400"
                               style={{
                                 width: `${(item.count / max) * 100}%`,
                               }}
                             />
-
                           </div>
-
                         </div>
                       );
                     })}
-
-                </div>
-
+                  </div>
+                )}
               </div>
 
             </div>
 
-            {/* Supplier */}
+            {/* Warehouse */}
 
             <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
 
@@ -1521,11 +1429,11 @@ export default function Home() {
                 <div>
 
                   <h3 className="font-bold text-slate-900">
-                    各供应商试工不通过 Trial Failure by Supplier
+                    各仓库被退回 Sent Back by Warehouse
                   </h3>
 
                   <p className="mt-1 text-[11px] text-slate-400">
-                    数据来源：临时工派遣表格 Source: Temp Dispatch Records
+                    共被退回 {formatNumber(trialFailureCount)} 人次 · 数据来源：人员到岗表 Source: Arrival Tracking
                   </p>
 
                 </div>
@@ -1539,37 +1447,92 @@ export default function Home() {
 
               </div>
 
-              <div className="overflow-hidden">
-
-                {trialSuppliers
-                  .slice(0, 7)
-                  .map((item, index) => (
-
-                    <div
-                      key={`${item.name}-${index}`}
-                      className="flex items-center justify-between border-b border-slate-50 px-6 py-4 last:border-0"
-                    >
-
-                      <div className="flex items-center">
-
-                        <div className="mr-3 flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-500">
-                          {index + 1}
+              <div className="p-6">
+                {/* Top 3 放大卡 */}
+                <div className="grid gap-3 grid-cols-3">
+                  {trialWarehouses.slice(0, 3).map((item, index) => {
+                    const max = trialWarehouses[0]?.count || 1;
+                    const share =
+                      trialFailureCount > 0
+                        ? (item.count / trialFailureCount) * 100
+                        : 0;
+                    const rankBg =
+                      index === 0
+                        ? "#e11d48"
+                        : index === 1
+                          ? "#f43f5e"
+                          : "#fb7185";
+                    return (
+                      <div
+                        key={`${item.name}-${index}`}
+                        className="rounded-xl border border-rose-100 bg-rose-50/60 p-3"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span
+                            className="flex h-7 w-7 items-center justify-center rounded-lg text-xs font-bold text-white"
+                            style={{ backgroundColor: rankBg }}
+                          >
+                            {index + 1}
+                          </span>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-rose-600">
+                            {formatPercent(share)}
+                          </span>
                         </div>
-
-                        <span className="text-sm font-medium text-slate-700">
+                        <p
+                          className="mt-2 truncate text-sm font-semibold text-slate-800"
+                          title={item.name}
+                        >
                           {item.name}
-                        </span>
-
+                        </p>
+                        <p className="mt-1 text-2xl font-bold text-rose-600">
+                          {formatNumber(item.count)}{" "}
+                          <span className="text-xs font-medium text-slate-400">
+                            人次
+                          </span>
+                        </p>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
+                          <div
+                            className="h-full rounded-full bg-rose-400"
+                            style={{
+                              width: `${(item.count / max) * 100}%`,
+                            }}
+                          />
+                        </div>
                       </div>
-
-                      <span className="rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-600">
-                        {formatNumber(item.count)}
-                      </span>
-
-                    </div>
-
-                  ))}
-
+                    );
+                  })}
+                </div>
+                {/* 其余列表 4-7 */}
+                {trialWarehouses.slice(3, 7).length > 0 && (
+                  <div className="mt-5 space-y-4">
+                    {trialWarehouses.slice(3, 7).map((item, index) => {
+                      const max = trialWarehouses[0]?.count || 1;
+                      return (
+                        <div key={`${item.name}-${index + 3}`}>
+                          <div className="mb-1.5 flex items-center justify-between">
+                            <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-600">
+                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[11px] font-bold text-slate-500">
+                                {index + 4}
+                              </span>
+                              <span className="truncate">{item.name}</span>
+                            </span>
+                            <span className="ml-3 shrink-0 text-sm font-bold text-slate-800">
+                              {formatNumber(item.count)}
+                            </span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className="h-full rounded-full bg-rose-400"
+                              style={{
+                                width: `${(item.count / max) * 100}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
             </div>
@@ -1583,7 +1546,7 @@ export default function Home() {
           <div className="pb-8 pt-6 text-center">
 
             <p className="text-[11px] text-slate-400">
-              内部使用 · Internal use only
+              内部使用· Internal Use Only
             </p>
 
             <p className="mt-1 text-[10px] text-slate-300">

@@ -5,11 +5,15 @@ run_all.py — 数据管线总入口
     python run_all.py [raw_dir] [dashboard.json 输出路径]
 
 默认：
-    raw_dir  = ../data/raw          （6 个 OTWS 导出 Excel 放这里）
+    raw_dir  = ../data/raw          （OTWS 导出 Excel 放这里，只认 2 种：
+                                      需求池文件、用工需求池 + 人员到岗表）
     输出     = ../data/processed/dashboard.json
 
-流程只有三步：读原始文件 -> 建 25 个数据集 -> 写 dashboard.json。
+流程只有三步：读原始文件 -> 建数据集 -> 写 dashboard.json。
 最后打印校验报告：行数、口径勾稽、数据问题 warning。
+
+每天导数：把当天的新文件放进 raw 目录，重跑即可。
+同一个文件放两次（改名也算）会被内容哈希认出并跳过。
 """
 
 import json
@@ -90,9 +94,10 @@ def main():
         sys.exit(1)
     print(f"      需求 {len(raw['demand'])} 行 / "
           f"发单 {len(raw['alloc'])} 行 / "
-          f"派遣名单 {len(raw['dispatch'])} 行 / "
-          f"考勤 {len(raw['attendance'])} 行 / "
-          f"临时工派遣 {len(raw['temp_dispatch'])} 行")
+          f"人员到岗 {len(raw['arrival_tracking'])} 行")
+    if raw["skipped_dupes"]:
+        for p in raw["skipped_dupes"]:
+            print(f"      跳过重复文件: {Path(p).name}")
 
     # ---- 2. 建数据集 ----
     print("\n[2/3] 构建数据集")

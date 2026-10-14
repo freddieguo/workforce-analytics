@@ -1,18 +1,24 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
+import DateRangePicker from "@/components/DateRangePicker";
 import { getDashboardData, type CsvRow } from "@/lib/data";
+import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
 
 /* Helpers */
-function numberValue(value: string | undefined) {
-  if (!value) return 0;
-  const n = Number(value.replace(/,/g, "").replace(/%/g, "").trim());
-  return Number.isFinite(n) ? n : 0;
-}
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(Math.round(value));
 }
 function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
+}
+function formatDateLabel(value: string) {
+  if (!value) return "—";
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return value;
+  const [, y, m, d] = match;
+  return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString("en-US", {
+    month: "short", day: "2-digit", year: "numeric",
+  });
 }
 function getValue(row: CsvRow, candidates: string[]) {
   const keys = Object.keys(row);
@@ -27,50 +33,104 @@ function getValue(row: CsvRow, candidates: string[]) {
   return "";
 }
 
-export default function TrialFailurePage() {
-  const data = getDashboardData();
+/* 到岗表仓库名（英文）-> 中文显示：Los Angeles-8 / LA-21 -> 洛杉矶8号仓 / 洛杉矶21号仓；(CP)->(中邮) */
+function normalizeWarehouseDisplay(name: string): string {
+  const num = name.match(/(\d+)/)?.[1] ?? "";
+  if (!num) return name;
+  let suffix = name.match(/\(([^)]+)\)/)?.[1] ?? "";
+  if (suffix.toUpperCase() === "CP") suffix = "中邮";
+  let s = `洛杉矶${num}号仓`;
+  if (suffix) s += `(${suffix})`;
+  return s;
+}
 
-  const mapRows = (rows: CsvRow[], nameKeys: string[]) =>
-    (rows ?? [])
-      .map((row) => {
-        const name = getValue(row, nameKeys) || "未分类";
-        const failure = numberValue(
-          getValue(row, ["试工不通过人数", "人数", "试工不通过", "count"])
-        );
-        return { name, failure };
-      })
+export default async function TrialFailurePage({ searchParams }: any) {
+  const params = (await searchParams) ?? {};
+  const saved = await getSavedRange();
+  const startParam = typeof params.start === "string" ? params.start : saved.start;
+  const endParam = typeof params.end === "string" ? params.end : saved.end;
+
+  const { arrivalTrackingDailySupplier, arrivalTrackingDailyWarehouse, arrivalTrackingDailyReason } = getDashboardData();
+
+  // 口径：被退回人次（到了但不符合要求被退回）。日期按到岗日期算。
+  const supRows = ((arrivalTrackingDailySupplier ?? []) as CsvRow[]);
+  const whRows = ((arrivalTrackingDailyWarehouse ?? []) as CsvRow[]);
+  const reasonRows = ((arrivalTrackingDailyReason ?? []) as CsvRow[]);
+  const { start, end, min, max } = resolveRange(
+    [...supRows.map((r) => getValue(r, ["日期"])),
+     ...whRows.map((r) => getValue(r, ["日期"])),
+     ...reasonRows.map((r) => getValue(r, ["日期"]))],
+    startParam,
+    endParam
+  );
+
+  const mapRows = (
+    summed: Array<Record<string, unknown>>,
+    nameField: string,
+    normalize?: (n: string) => string
+  ) => {
+    const m = new Map<string, number>();
+    for (const r of summed) {
+      const raw = String(r[nameField] ?? "未分类") || "未分类";
+      const name = normalize ? normalize(raw) : raw;
+      const v = Number(r["被退回人次"] ?? r["人次"] ?? 0) || 0;
+      m.set(name, (m.get(name) ?? 0) + v);
+    }
+    return [...m.entries()]
+      .map(([name, failure]) => ({ name, failure }))
       .filter((r) => r.name !== "未分类" && r.failure > 0)
       .sort((a, b) => b.failure - a.failure);
+  };
 
-  const suppliers = mapRows(data.trialFailureSupplier, ["供应商", "供应商名称"]);
-  const warehouses = mapRows(data.trialFailureWarehouse, ["仓库", "物理仓", "需求仓"]);
-  const jobs = mapRows(data.trialFailureJob, ["工种", "Job"]);
+  const suppliers = mapRows(
+    sumByKey(filterByDateRange(supRows, start, end), "供应商", ["被退回人次"]),
+    "供应商"
+  );
+  const warehouses = mapRows(
+    sumByKey(filterByDateRange(whRows, start, end), "仓库", ["被退回人次"]),
+    "仓库",
+    normalizeWarehouseDisplay
+  );
+  const reasons = mapRows(
+    sumByKey(filterByDateRange(reasonRows, start, end), "不符合要求原因", ["人次"]),
+    "不符合要求原因"
+  );
 
   const total = suppliers.reduce((s, r) => s + r.failure, 0)
     || warehouses.reduce((s, r) => s + r.failure, 0)
-    || jobs.reduce((s, r) => s + r.failure, 0);
+    || reasons.reduce((s, r) => s + r.failure, 0);
+
+  // 拟到岗总人次（算退回率的分母）
+  const totalScheduled = sumByKey(
+    filterByDateRange(supRows, start, end), "供应商", ["拟到岗人次"]
+  ).reduce((s, r) => s + (Number(r["拟到岗人次"] ?? 0) || 0), 0);
+  const sentBackRate = totalScheduled > 0 ? (total / totalScheduled) * 100 : 0;
 
   const topSup = suppliers[0];
   const topWh = warehouses[0];
-  const topJob = jobs[0];
+  const topReason = reasons[0];
 
   const top3SupShare = total > 0
     ? (suppliers.slice(0, 3).reduce((s, r) => s + r.failure, 0) / total) * 100 : 0;
   const top3WhShare = total > 0
     ? (warehouses.slice(0, 3).reduce((s, r) => s + r.failure, 0) / total) * 100 : 0;
 
-  const RankList = ({ items }: { items: { name: string; failure: number }[] }) => (
+  const periodLabel = start && end
+    ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
+    : "—";
+
+  const RankList = ({ items, wrapName }: { items: { name: string; failure: number }[]; wrapName?: boolean }) => (
     <div className="space-y-4">
       {items.slice(0, 8).map((it, i) => (
         <div key={it.name}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className={`flex h-7 w-7 items-center justify-center rounded-lg text-[11px] font-bold ${
+            <div className="flex min-w-0 items-center gap-3">
+              <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold ${
                 i < 3 ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-500"
               }`}>{i + 1}</span>
-              <span className="max-w-[180px] truncate text-sm font-semibold">{it.name}</span>
+              <span className={wrapName ? "text-sm font-semibold leading-snug" : "max-w-[180px] truncate text-sm font-semibold"}>{it.name}</span>
             </div>
-            <span className="text-lg font-bold text-rose-600">{formatNumber(it.failure)}</span>
+            <span className="ml-3 shrink-0 text-lg font-bold text-rose-600">{formatNumber(it.failure)}</span>
           </div>
           <div className="ml-10 mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
             <div
@@ -94,26 +154,37 @@ export default function TrialFailurePage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-medium text-slate-400">劳动质量 Labor Quality</p>
-              <h1 className="mt-0.5 text-xl font-bold tracking-tight">试工不通过分析 Trial Failure Analysis</h1>
+              <h1 className="mt-0.5 text-xl font-bold tracking-tight">被退回分析 Sent Back Analysis</h1>
             </div>
-            <div className="hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-right sm:block">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">统计周期 Reporting Period</p>
-              <p className="text-sm font-semibold text-slate-700">Sep 01, 2026 — Sep 30, 2026</p>
+            <div className="flex items-center gap-3">
+              <div className="hidden rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-right sm:block">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">统计周期 Reporting Period</p>
+                <p className="text-sm font-semibold text-slate-700">{periodLabel}</p>
+              </div>
+              <div className="flex items-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <span className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-xs font-semibold text-emerald-700">已处理数据 Processed Data</span>
+              </div>
             </div>
           </div>
         </header>
 
         <div className="px-5 py-7 md:px-8">
+          {/* 日期筛选 */}
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <DateRangePicker start={start} end={end} min={min} max={max} />
+          </div>
+
           {/* Hero */}
           <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-600 via-rose-700 to-red-800 p-8 text-white shadow-xl">
             <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
             <div className="relative">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-200">试工不通过集中在哪里？ Where are trial failures concentrated?</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-200">被退回总览 Sent-back Overview</p>
               <div className="mt-4 flex items-end gap-6">
                 <p className="text-6xl font-bold tracking-tight">{formatNumber(total)}</p>
                 <div className="pb-2">
-                  <p className="text-sm text-rose-100">试工不通过总人数 Total Trial Failures</p>
-                  <p className="mt-1 text-xs text-rose-200">数据来源：临时工派遣表 Source: Temp Dispatch Records</p>
+                  <p className="text-sm text-rose-100">被退回总人次 Total Sent Back</p>
+                  <p className="mt-1 text-xs text-rose-200">口径：到了但不符合要求被退回的人次 · 数据来源：人员到岗表 Source: Arrival Tracking</p>
                 </div>
               </div>
               <div className="mt-6 grid max-w-2xl grid-cols-3 gap-4">
@@ -126,8 +197,8 @@ export default function TrialFailurePage() {
                   <p className="mt-1 text-xs text-rose-200">涉及仓库<br />Warehouses</p>
                 </div>
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-xl font-bold">{formatPercent(top3SupShare)}</p>
-                  <p className="mt-1 text-xs text-rose-200">前三供应商占比<br />Top 3 Share</p>
+                  <p className="text-xl font-bold">{formatPercent(sentBackRate)}</p>
+                  <p className="mt-1 text-xs text-rose-200">被退回率<br />Sent-back Rate</p>
                 </div>
               </div>
             </div>
@@ -151,12 +222,12 @@ export default function TrialFailurePage() {
                 <p className="mt-2 text-xs text-slate-500">占全部 {formatPercent(total > 0 ? (topWh.failure / total) * 100 : 0)}</p>
               </div>
             )}
-            {topJob && (
+            {topReason && (
               <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">🔴 最多工种 Top Job</p>
-                <p className="mt-3 truncate text-lg font-bold">{topJob.name}</p>
-                <p className="mt-1 text-3xl font-bold text-rose-600">{formatNumber(topJob.failure)}</p>
-                <p className="mt-2 text-xs text-slate-500">占全部 {formatPercent(total > 0 ? (topJob.failure / total) * 100 : 0)}</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">🔴 最多原因 Top Reason</p>
+                <p className="mt-3 text-lg font-bold leading-snug">{topReason.name}</p>
+                <p className="mt-1 text-3xl font-bold text-rose-600">{formatNumber(topReason.failure)}</p>
+                <p className="mt-2 text-xs text-slate-500">占全部 {formatPercent(total > 0 ? (topReason.failure / total) * 100 : 0)}</p>
               </div>
             )}
           </section>
@@ -193,24 +264,24 @@ export default function TrialFailurePage() {
           <section className="mt-6 grid gap-6 xl:grid-cols-3">
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="font-bold">供应商排名 By Supplier</h3>
-              <p className="mt-1 text-xs text-slate-400">按不通过人数排序 Rank by Failure Count</p>
+              <p className="mt-1 text-xs text-slate-400">按被退回人次排序 Rank by Sent-back Count</p>
               <div className="mt-5"><RankList items={suppliers} /></div>
             </div>
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="font-bold">仓库排名 By Warehouse</h3>
-              <p className="mt-1 text-xs text-slate-400">按不通过人数排序 Rank by Failure Count</p>
+              <p className="mt-1 text-xs text-slate-400">按被退回人次排序 Rank by Sent-back Count</p>
               <div className="mt-5"><RankList items={warehouses} /></div>
             </div>
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="font-bold">工种排名 By Job</h3>
-              <p className="mt-1 text-xs text-slate-400">按不通过人数排序 Rank by Failure Count</p>
-              <div className="mt-5"><RankList items={jobs} /></div>
+              <h3 className="font-bold">原因排名 By Reason</h3>
+              <p className="mt-1 text-xs text-slate-400">按被退回人次排序 Rank by Sent-back Count</p>
+              <div className="mt-5"><RankList items={reasons} wrapName /></div>
             </div>
           </section>
 
           <div className="pb-8 pt-6 text-center">
             <Link href="/" className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">← 返回总览 Back to Overview</Link>
-            <p className="mt-3 text-[11px] text-slate-400">只展示不通过人数，不算不通过率 · Counts only, no failure rate</p>
+            <p className="mt-3 text-[11px] text-slate-400">被退回率 = 被退回人次 ÷ 拟到岗人次 · Sent-back rate = sent back ÷ scheduled</p>
           </div>
         </div>
       </main>

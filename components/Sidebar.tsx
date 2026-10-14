@@ -8,7 +8,6 @@ type SidebarIconType =
   | "overview"
   | "supplier"
   | "warehouse"
-  | "ot"
   | "trial"
   | "data";
 
@@ -68,20 +67,6 @@ function SidebarIcon({
     );
   }
 
-  if (type === "ot") {
-    return (
-      <svg
-        className={common}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-      >
-        <path d="M3 3v18h18" />
-        <path d="m7 16 4-5 3 3 5-7" />
-      </svg>
-    );
-  }
-
   if (type === "trial") {
     return (
       <svg
@@ -133,12 +118,7 @@ const navigation = [
     icon: "data" as SidebarIconType,
   },
   {
-    name: "加班分析 OT Analysis",
-    href: "/ot",
-    icon: "ot" as SidebarIconType,
-  },
-  {
-    name: "试工不通过 Trial Failure",
+    name: "被退回分析 Sent Back Analysis",
     href: "/trial",
     icon: "trial" as SidebarIconType,
   },
@@ -248,10 +228,10 @@ export default function Sidebar() {
         </div>
         <div>
           <div className="text-[16px] font-extrabold tracking-wide text-white">
-            HRBP <span className="font-semibold text-indigo-300">数据看板</span>
+            HR <span className="font-semibold text-indigo-300">数据看板</span>
           </div>
           <div className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.22em] text-slate-500">
-            HRBP Dashboard
+            HR Dashboard
           </div>
         </div>
         {/* 移动端关闭按钮 */}
