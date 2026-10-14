@@ -94,7 +94,7 @@ function MonthCalendar({
       >
         {cells.map((iso, i) => {
           if (!iso) return <div key={i} />;
-          const disabled = (min && iso < min) || (max && iso > max);
+          const disabled = Boolean((min && iso < min) || (max && iso > max));
           const isStart = iso === draftStart;
           const isEnd = iso === draftEnd;
           const isEndpoint = isStart || isEnd;
