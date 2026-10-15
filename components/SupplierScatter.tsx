@@ -47,7 +47,9 @@ export default function SupplierScatter({ suppliers }: { suppliers: SupplierRow[
     <div className="relative">
       <svg viewBox={"0 0 " + W + " " + H} className="w-full" style={{ height: "auto", display: "block" }}>
         <line x1={divX} y1={PT} x2={divX} y2={H - PB} stroke="#e2e8f0" strokeWidth="1" strokeDasharray="5 4" />
+        <text x={divX} y={H - PB + 16} fontSize="10" fill="#94a3b8" textAnchor="middle">{formatNumber(maxX * 0.5)}</text>
         <line x1={PL} y1={divY} x2={W - PR} y2={divY} stroke="#e2e8f0" strokeWidth="1" strokeDasharray="5 4" />
+        <text x={PL - 6} y={divY + 4} fontSize="10" fill="#94a3b8" textAnchor="end">60%</text>
         <line x1={PL} y1={H - PB} x2={W - PR} y2={H - PB} stroke="#cbd5e1" strokeWidth="1" />
         <line x1={PL} y1={PT} x2={PL} y2={H - PB} stroke="#cbd5e1" strokeWidth="1" />
         <text x={W - PR} y={H - 8} fontSize="11" fill="#94a3b8" textAnchor="end">发单量 →</text>
