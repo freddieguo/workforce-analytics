@@ -789,7 +789,7 @@ export default async function Home({ searchParams }: any) {
             <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
               <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
-                  <h3 className="font-bold text-slate-900">
+                  <h3 className="text-lg font-bold text-slate-900">
                     各仓库需求分布 Demand by Warehouse
                   </h3>
                   <p className="mt-1 text-[11px] text-slate-400">
@@ -842,11 +842,26 @@ export default async function Home({ searchParams }: any) {
                         className="w-full rounded-xl border border-slate-200"
                         style={{ height: "460px" }}
                       />
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
-                        <span>气泡大小(Bubble size) = 需求量(demand)</span>
-                        <span>绿 ≥60% · 黄 40-60% · 红 &lt;40% · 灰 无数据</span>
-                        <span>同一地址多仓合并为一个点</span>
-                      </div>
+                          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500">
+                            <span>气泡大小(Bubble size) = 需求量(demand)</span>
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "#10b981" }} />
+                              绿 ≥60%
+                            </span>
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "#f59e0b" }} />
+                              黄 40-60%
+                            </span>
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "#f43f5e" }} />
+                              红 &lt;40%
+                            </span>
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: "#94a3b8" }} />
+                              灰 无数据
+                            </span>
+                            <span>同一地址多仓合并为一个点</span>
+                          </div>
                     </div>
                   );
                 })()}

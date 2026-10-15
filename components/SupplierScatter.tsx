@@ -21,12 +21,25 @@ function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
 }
 
+/* 达成率三色：绿≥60% · 黄40-60% · 红<40%（跟表格悬停卡同一套） */
+function rateColor(fr: number) {
+  if (fr >= 60) return "text-emerald-600";
+  if (fr >= 40) return "text-amber-600";
+  return "text-rose-600";
+}
+/* 派遣率三色：同样 60/40 */
+function dispatchColor(dr: number) {
+  if (dr >= 60) return "text-emerald-600";
+  if (dr >= 40) return "text-amber-600";
+  return "text-rose-600";
+}
+
 /* 散点图：横轴=发单量，纵轴=达成率（悬停显示公司信息卡） */
 export default function SupplierScatter({ suppliers }: { suppliers: SupplierRow[] }) {
   const [hovered, setHovered] = useState<SupplierRow | null>(null);
   const pts = suppliers.filter((s) => s.fulfillmentRate !== null && s.requested > 0);
   if (pts.length === 0) return null;
-  const W = 620, H = 250, PL = 44, PR = 20, PT = 14, PB = 36;
+  const W = 620, H = 250, PL = 58, PR = 20, PT = 14, PB = 36;
   const maxX = Math.max(1, ...pts.map((p) => p.requested));
   const yMin = 0;
   const yMax = 100;
@@ -52,6 +65,7 @@ export default function SupplierScatter({ suppliers }: { suppliers: SupplierRow[
         <text x={PL - 6} y={divY + 4} fontSize="10" fill="#94a3b8" textAnchor="end">60%</text>
         <line x1={PL} y1={H - PB} x2={W - PR} y2={H - PB} stroke="#cbd5e1" strokeWidth="1" />
         <line x1={PL} y1={PT} x2={PL} y2={H - PB} stroke="#cbd5e1" strokeWidth="1" />
+        <text x={16} y={H / 2} fontSize="11" fill="#94a3b8" textAnchor="middle" transform={"rotate(-90 16 " + H / 2 + ")"}>达成率 →</text>
         <text x={W - PR} y={H - 8} fontSize="11" fill="#94a3b8" textAnchor="end">发单量 →</text>
         <text x={PL - 6} y={y(yMin) + 4} fontSize="10" fill="#94a3b8" textAnchor="end">{yMin}%</text>
         <text x={PL - 6} y={y(yMax) + 4} fontSize="10" fill="#94a3b8" textAnchor="end">{yMax}%</text>
@@ -82,18 +96,37 @@ export default function SupplierScatter({ suppliers }: { suppliers: SupplierRow[
         <span className="flex items-center"><span className="mr-1.5 inline-block h-3 w-3 rounded-full bg-blue-500" />量小率高（样本小）</span>
         <span className="flex items-center"><span className="mr-1.5 inline-block h-3 w-3 rounded-full bg-amber-500" />量小率低</span>
       </div>
-      {hovered && (
-        <div className="pointer-events-none absolute left-0 top-0 z-30 w-72 rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+      {(() => {
+        if (!hovered) return null;
+        const hx = x(hovered.requested);
+        const hy = y(hovered.fulfillmentRate ?? 0);
+        /* 卡片跟随圆点：点在右半边卡片就弹到左边，点在上半边卡片就弹到下面 */
+        const toLeft = hx > W * 0.55;
+        const below = hy < H * 0.5;
+        return (
+        <div
+          className="pointer-events-none absolute z-30 w-72 rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+          style={{
+            left: (hx / W) * 100 + "%",
+            top: (hy / H) * 100 + "%",
+            transform:
+              "translate(" +
+              (toLeft ? "calc(-100% - 14px)" : "14px") +
+              ", " +
+              (below ? "14px" : "calc(-100% - 14px)") +
+              ")",
+          }}
+        >
           <p className="truncate text-base font-bold text-slate-900" title={hovered.name}>{hovered.name}</p>
-          <p className="mt-0.5 text-[11px] text-slate-400">
-            发单 {formatNumber(hovered.requested)} 人次 · Issued
+          <p className="mt-1 text-xs text-slate-500">
+            发单 <span className="font-bold tabular-nums text-slate-900">{formatNumber(hovered.requested)}</span> 人次 · Issued
           </p>
           <div className="mt-3 space-y-2">
             <div className="flex items-center justify-between text-sm">
               <span className="text-slate-500">已派遣 Dispatched</span>
               <span className="font-semibold tabular-nums text-slate-800">
                 {formatNumber(hovered.filled)}{" "}
-                <span className="font-normal text-slate-400">({formatPercent(hovered.dispatchRate)})</span>
+                <span className={"font-semibold " + dispatchColor(hovered.dispatchRate)}>({formatPercent(hovered.dispatchRate)})</span>
               </span>
             </div>
             <div className="flex items-center justify-between text-sm">
@@ -118,13 +151,14 @@ export default function SupplierScatter({ suppliers }: { suppliers: SupplierRow[
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-slate-500">达成率 Fulfillment</span>
-              <span className="font-bold tabular-nums text-slate-800">
+              <span className={"font-bold tabular-nums " + rateColor(hovered.fulfillmentRate ?? 0)}>
                 {hovered.fulfillmentRate !== null ? formatPercent(hovered.fulfillmentRate) : "—"}
               </span>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

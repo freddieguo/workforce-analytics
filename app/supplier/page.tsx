@@ -196,7 +196,16 @@ export default async function SupplierPage({ searchParams }: any) {
           {/* 散点图：发单量 vs 达成率 */}
           <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
             <h3 className="text-lg font-bold">发单量 vs 达成率 Volume vs Fulfillment</h3>
-            <p className="mt-1 text-xs text-slate-400">右下（量大率低）最危险 · 悬停圆点看详情</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <p className="text-xs text-slate-400">右下（量大率低）最危险</p>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
+                  </span>
+                  悬停圆点看详情
+                </span>
+              </div>
             <div className="mt-4">
               <SupplierScatter suppliers={suppliers} />
             </div>
