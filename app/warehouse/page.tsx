@@ -62,14 +62,16 @@ export default async function WarehousePage({ searchParams }: any) {
   const startParam = typeof params.start === "string" ? params.start : saved.start;
   const endParam = typeof params.end === "string" ? params.end : saved.end;
 
-  const { allocDailyWarehouse, arrivalTrackingDailyWarehouse } = getDashboardData();
+  const { allocDailyWarehouse, arrivalTrackingDailyWarehouse, demandDaily, allocDaily } = getDashboardData();
 
-  // 日期范围：发单日期与到岗日期的并集（两个维度各自按自己的日期算）
+  // 日期范围：跟别的页对齐（需求 + 发单 + 到岗的日期并集）
   const allocRows = ((allocDailyWarehouse ?? []) as CsvRow[]);
   const atRows = ((arrivalTrackingDailyWarehouse ?? []) as CsvRow[]);
   const { start, end, min, max } = resolveRange(
     [...allocRows.map((r) => getValue(r, ["日期"])),
-     ...atRows.map((r) => getValue(r, ["日期"]))],
+     ...atRows.map((r) => getValue(r, ["日期"])),
+     ...((demandDaily ?? []) as CsvRow[]).map((r) => getValue(r, ["日期"])),
+     ...((allocDaily ?? []) as CsvRow[]).map((r) => getValue(r, ["日期"]))],
     startParam,
     endParam
   );

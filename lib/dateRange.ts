@@ -20,17 +20,23 @@ export async function getSavedRange(): Promise<{ start?: string; end?: string }>
   }
 }
 
-/** 由全部日期 + URL 参数算出有效范围。参数缺失/越界时回退到全量范围。 */
+/** 由全部日期 + URL 参数算出有效范围。
+ * 只要参数带了就直接用（不拿本页的 min/max 去卡），这样不同页之间选的范围能保持一致；
+ * 参数缺失时才回退到全量范围。
+ * 会过滤掉 Excel 空日期 artifact（如 1899-12-31）这类明显无效的日期。 */
 export function resolveRange(
   allDates: Array<string | undefined>,
   startParam?: string,
   endParam?: string
 ): DateRange {
-  const valid = [...new Set(allDates.filter(Boolean) as string[])].sort();
+  const sane = (d?: string) => Boolean(d && d >= "2000-01-01");
+  const valid = [...new Set(allDates.filter(Boolean) as string[])]
+    .filter(sane)
+    .sort();
   const min = valid[0] ?? "";
   const max = valid[valid.length - 1] ?? "";
-  let start = startParam && startParam >= min && startParam <= max ? startParam : min;
-  let end = endParam && endParam >= min && endParam <= max ? endParam : max;
+  let start = sane(startParam) ? (startParam as string) : min;
+  let end = sane(endParam) ? (endParam as string) : max;
   if (start > end) [start, end] = [end, start];
   return { start, end, min, max };
 }

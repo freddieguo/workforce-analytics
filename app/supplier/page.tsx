@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import DateRangePicker from "@/components/DateRangePicker";
+import SupplierTable from "@/components/SupplierTable";
 import { getDashboardData, type CsvRow } from "@/lib/data";
 import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
 
@@ -51,14 +52,16 @@ export default async function SupplierPage({ searchParams }: any) {
   const startParam = typeof params.start === "string" ? params.start : saved.start;
   const endParam = typeof params.end === "string" ? params.end : saved.end;
 
-  const { allocDailySupplier, arrivalTrackingDailySupplier } = getDashboardData();
+  const { allocDailySupplier, arrivalTrackingDailySupplier, demandDaily, allocDaily } = getDashboardData();
 
-  // 日期范围：发单日期与到岗日期的并集（两个维度各自按自己的日期算）
+  // 日期范围：跟别的页对齐（需求 + 发单 + 到岗的日期并集）
   const allocRows = ((allocDailySupplier ?? []) as CsvRow[]);
   const atRows = ((arrivalTrackingDailySupplier ?? []) as CsvRow[]);
   const { start, end, min, max } = resolveRange(
     [...allocRows.map((r) => getValue(r, ["日期"])),
-     ...atRows.map((r) => getValue(r, ["日期"]))],
+     ...atRows.map((r) => getValue(r, ["日期"])),
+     ...((demandDaily ?? []) as CsvRow[]).map((r) => getValue(r, ["日期"])),
+     ...((allocDaily ?? []) as CsvRow[]).map((r) => getValue(r, ["日期"]))],
     startParam,
     endParam
   );
@@ -83,7 +86,6 @@ export default async function SupplierPage({ searchParams }: any) {
       const filled = Number(a["已派遣人数"] ?? 0);
       const unfilled = Math.max(requested - filled, 0);
       const dispatchRate = requested > 0 ? (filled / requested) * 100 : 0;
-      // 实际到场 = 到岗人次 − NoShow人次；到场率 = 实际到场 ÷ 已派遣
       const total = at ? Number(at["到岗人次"] ?? 0) : 0;
       const noshow = at ? Number(at["NoShow人次"] ?? 0) : 0;
       const actualArrived = at ? total - noshow : null;
@@ -112,6 +114,16 @@ export default async function SupplierPage({ searchParams }: any) {
   const best = suppliers[0] ?? null;
   const worst = [...suppliers].sort((a, b) => (a.fulfillmentRate ?? 999) - (b.fulfillmentRate ?? 999))[0] ?? null;
   const largestGap = [...suppliers].sort((a, b) => b.unfilled - a.unfilled)[0] ?? null;
+
+  /* 需要盯紧：自动挑问题 */
+  // 1. 最危险：量大（>=150）但达成率最低
+  const dangerous = suppliers
+    .filter((s) => s.fulfillmentRate !== null && s.requested >= 150)
+    .sort((a, b) => (a.fulfillmentRate ?? 999) - (b.fulfillmentRate ?? 999))[0] ?? null;
+  // 2. 样本小但达成率虚高：量小（<150）但达成率>=80
+  const inflated = suppliers
+    .filter((s) => s.fulfillmentRate !== null && s.requested < 150 && (s.fulfillmentRate ?? 0) >= 80)
+    .sort((a, b) => (b.fulfillmentRate ?? -1) - (a.fulfillmentRate ?? -1))[0] ?? null;
 
   const periodLabel = start && end
     ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
@@ -185,108 +197,56 @@ export default async function SupplierPage({ searchParams }: any) {
             </div>
           </section>
 
-          {/* Spotlight cards */}
-          <section className="mt-6 grid gap-4 md:grid-cols-3">
-            {best?.fulfillmentRate != null && (
-              <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">🏆 达成率最高 Best</p>
-                <p className="mt-3 truncate text-lg font-bold">{best.name}</p>
-                <p className="mt-1 text-3xl font-bold text-emerald-600">{formatPercent(best.fulfillmentRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(best.accepted ?? 0)} / {formatNumber(best.requested)} 已接受 accepted</p>
-              </div>
-            )}
-            {worst?.fulfillmentRate != null && (
-              <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">⚠️ 达成率最低 Attention</p>
-                <p className="mt-3 truncate text-lg font-bold">{worst.name}</p>
-                <p className="mt-1 text-3xl font-bold text-rose-600">{formatPercent(worst.fulfillmentRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(worst.accepted ?? 0)} / {formatNumber(worst.requested)} 已接受 accepted</p>
-              </div>
-            )}
-            {largestGap && (
-              <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">📊 最大缺口 Largest Gap</p>
-                <p className="mt-3 truncate text-lg font-bold">{largestGap.name}</p>
-                <p className="mt-1 text-3xl font-bold text-amber-600">{formatNumber(largestGap.unfilled)}</p>
-                <p className="mt-2 text-xs text-slate-500">未派遣 Undispatched · 缺口率 Gap rate {formatPercent(100 - largestGap.dispatchRate)}</p>
-              </div>
-            )}
+          {/* 需要盯紧 */}
+          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
+            <h3 className="text-lg font-bold">需要盯紧 Needs Attention</h3>
+            <p className="mt-1 text-xs text-slate-400">系统自动挑出最值得看的 3 个问题，不用自己翻表找</p>
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
+              {dangerous && (
+                <div className="rounded-2xl border-l-4 border-rose-500 bg-rose-50/60 p-5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">最危险 Highest Risk</p>
+                  <p className="mt-2 truncate text-base font-bold" title={dangerous.name}>{dangerous.name}</p>
+                  <p className="mt-1 text-2xl font-bold text-rose-600">{formatPercent(dangerous.fulfillmentRate ?? 0)}</p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    发单 {formatNumber(dangerous.requested)} 人次，达成率最低。量大率低，影响最大，优先处理。
+                  </p>
+                </div>
+              )}
+              {largestGap && (
+                <div className="rounded-2xl border-l-4 border-amber-500 bg-amber-50/60 p-5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">缺口最大 Largest Gap</p>
+                  <p className="mt-2 truncate text-base font-bold" title={largestGap.name}>{largestGap.name}</p>
+                  <p className="mt-1 text-2xl font-bold text-amber-600">{formatNumber(largestGap.unfilled)}</p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    人次没派出去。发单 {formatNumber(largestGap.requested)}，只派出 {formatNumber(largestGap.filled)}。
+                  </p>
+                </div>
+              )}
+              {inflated && (
+                <div className="rounded-2xl border-l-4 border-indigo-500 bg-indigo-50/60 p-5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">别被迷惑 Small Sample</p>
+                  <p className="mt-2 truncate text-base font-bold" title={inflated.name}>{inflated.name}</p>
+                  <p className="mt-1 text-2xl font-bold text-indigo-600">{formatPercent(inflated.fulfillmentRate ?? 0)}</p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    达成率看着高，但只做了 {formatNumber(inflated.requested)} 人次。样本太小，别当主力；可以多给单试试。
+                  </p>
+                </div>
+              )}
+            </div>
           </section>
 
-          {/* Visual ranking */}
+          {/* 供应商明细：表格 + 小bar + 排序切换 + 悬停详情 */}
           <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold">供应商排名 Supplier Ranking</h3>
-                <p className="mt-1 text-xs text-slate-400">按达成率从高到低排序 Rank by Fulfillment Rate (High to Low) · 数据来源：用工需求池（发单详情）+ 人员到岗表 Source: Labor Demand Pool + Arrival Tracking</p>
-              </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">{suppliers.length} 家 suppliers</span>
-            </div>
-
-            <div className="mt-6 space-y-5">
-              {suppliers.map((s, i) => {
-                const fr = s.fulfillmentRate ?? 0;
-                const barColor = fr >= 80 ? "from-emerald-400 to-emerald-600"
-                  : fr >= 60 ? "from-amber-400 to-amber-600"
-                  : "from-rose-400 to-rose-600";
-                const textColor = fr >= 80 ? "text-emerald-600"
-                  : fr >= 60 ? "text-amber-600" : "text-rose-600";
-                const arrivalAbnormal = s.arrivalRate !== null && (s.arrivalRate > 115 || s.arrivalRate < 70);
-                return (
-                  <div key={s.name} className="group rounded-2xl border border-slate-100 p-4 transition hover:border-indigo-100 hover:bg-indigo-50/30 md:p-5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
-                          i === 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
-                        }`}>{i + 1}</span>
-                        <span className="truncate text-sm font-semibold">{s.name}</span>
-                      </div>
-                      <span className={`ml-4 shrink-0 text-lg font-bold ${textColor}`}>
-                        {s.fulfillmentRate !== null ? formatPercent(s.fulfillmentRate) : "—"}
-                      </span>
-                    </div>
-                    <div className="ml-11 mt-2 h-3 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className={`h-full rounded-full bg-gradient-to-r ${barColor} transition-all duration-700`}
-                        style={{ width: `${Math.min(fr, 100)}%` }}
-                      />
-                    </div>
-                    <div className="ml-11 mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-400 md:grid-cols-4">
-                      <span>{formatNumber(s.requested)} 已发单 Issued</span>
-                      <span>
-                        {formatNumber(s.filled)} 已派遣 Dispatched
-                        <span className="text-slate-500"> ({formatPercent(s.dispatchRate)})</span>
-                      </span>
-                      {s.actualArrived !== null ? (
-                        <span>
-                          {formatNumber(s.actualArrived)} 实际到场 Arrived
-                          {s.arrivalRate !== null && (
-                            <span className={arrivalAbnormal ? "font-semibold text-amber-600" : "text-slate-500"}>
-                              {" "}({formatPercent(s.arrivalRate)})
-                            </span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">实际到场 —</span>
-                      )}
-                      {s.accepted !== null ? (
-                        <span className="font-medium text-emerald-600">
-                          {formatNumber(s.accepted)} 已接受 Accepted
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">已接受 —</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+            <h3 className="text-lg font-bold">供应商明细 Supplier Details</h3>
+            <div className="mt-4">
+              <SupplierTable suppliers={suppliers} />
             </div>
           </section>
 
           {/* Footer */}
           <div className="pb-8 pt-6 text-center">
             <Link href="/" className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">← 返回总览 Back to Overview</Link>
-            <p className="mt-3 text-[11px] text-slate-400">派遣率 = 已派遣 ÷ 已发单 · Dispatch rate = dispatched ÷ issued</p>
+            <p className="mt-3 text-[11px] text-slate-400">达成率 = 已接受 ÷ 已发单 · Fulfillment rate = accepted ÷ issued</p>
           </div>
         </div>
       </main>

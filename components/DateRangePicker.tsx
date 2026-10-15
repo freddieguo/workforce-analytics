@@ -156,11 +156,28 @@ export default function DateRangePicker({
   const [draftStart, setDraftStart] = useState(start);
   const [draftEnd, setDraftEnd] = useState(end);
   const [view, setView] = useState(() => (start || today).slice(0, 7));
+  // 年月快选
+  const [showYM, setShowYM] = useState(false);
+  const [ymYear, setYmYear] = useState(() => Number((start || today).slice(0, 4)));
+  const minYear = min ? Number(min.slice(0, 4)) : ymYear - 5;
+  const maxYear = max ? Number(max.slice(0, 4)) : ymYear + 5;
+
+  const openYM = () => {
+    setYmYear(Number(view.slice(0, 4)));
+    setShowYM((v) => !v);
+  };
+  const pickYM = (m: number) => {
+    setView(`${ymYear}-${pad(m)}`);
+    setShowYM(false);
+  };
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        setShowYM(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -172,6 +189,7 @@ export default function DateRangePicker({
     // 记住这次选的范围（会话 cookie，关浏览器清掉）：跳到别的页面时默认用它
     document.cookie = `dateRange=${a}|${b}; path=/`;
     setOpen(false);
+    setShowYM(false);
     router.push(`${pathname}?start=${a}&end=${b}`);
   };
 
@@ -264,7 +282,10 @@ export default function DateRangePicker({
           {/* 点外面关闭 */}
           <div
             className="fixed inset-0 z-40"
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              setOpen(false);
+              setShowYM(false);
+            }}
           />
           <div
             className="absolute left-0 top-full z-50 mt-2 rounded-3xl border border-slate-200 bg-white p-4 shadow-2xl"
@@ -288,13 +309,26 @@ export default function DateRangePicker({
                   结束 End · {formatShort(draftEnd)}
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-full px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-1">
+                {/* 年月快选 */}
+                <button
+                  type="button"
+                  onClick={openYM}
+                  className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600"
+                >
+                  {view.slice(0, 4)}年{Number(view.slice(5, 7))}月 ▾
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    setShowYM(false);
+                  }}
+                  className="rounded-full px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
             <p className="mb-3 text-xs text-slate-400">
               {mode === "start"
@@ -346,7 +380,10 @@ export default function DateRangePicker({
             <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={() => {
+                  setOpen(false);
+                  setShowYM(false);
+                }}
                 className="rounded-full border border-slate-200 px-4 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
               >
                 取消 Cancel
@@ -359,6 +396,59 @@ export default function DateRangePicker({
                 确定 Apply
               </button>
             </div>
+
+            {/* 年月快选浮层：盖在日历上面，点外面只关它 */}
+            {showYM && (
+              <div
+                className="absolute inset-0 z-[70] flex items-center justify-center rounded-3xl bg-slate-900/20"
+                onClick={() => setShowYM(false)}
+              >
+                <div
+                  className="w-64 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => setYmYear((y) => Math.max(minYear, y - 1))}
+                      disabled={ymYear <= minYear}
+                      className="flex h-8 w-8 items-center justify-center rounded-full text-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30"
+                    >
+                      ‹
+                    </button>
+                    <span className="text-sm font-bold text-slate-800">{ymYear}年</span>
+                    <button
+                      type="button"
+                      onClick={() => setYmYear((y) => Math.min(maxYear, y + 1))}
+                      disabled={ymYear >= maxYear}
+                      className="flex h-8 w-8 items-center justify-center rounded-full text-lg text-slate-500 hover:bg-slate-100 disabled:opacity-30"
+                    >
+                      ›
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => {
+                      const active =
+                        m === Number(view.slice(5, 7)) && ymYear === Number(view.slice(0, 4));
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => pickYM(m)}
+                          className={`rounded-lg px-2 py-2 text-xs font-medium transition ${
+                            active
+                              ? "bg-indigo-600 font-bold text-white"
+                              : "text-slate-600 hover:bg-indigo-50 hover:text-indigo-700"
+                          }`}
+                        >
+                          {m}月
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}

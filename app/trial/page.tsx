@@ -50,19 +50,23 @@ export default async function TrialFailurePage({ searchParams }: any) {
   const startParam = typeof params.start === "string" ? params.start : saved.start;
   const endParam = typeof params.end === "string" ? params.end : saved.end;
 
-  const { arrivalTrackingDailySupplier, arrivalTrackingDailyWarehouse, arrivalTrackingDailyReason } = getDashboardData();
+  const { arrivalTrackingDailySupplier, arrivalTrackingDailyWarehouse, arrivalTrackingDailyReason, demandDaily, allocDaily } = getDashboardData();
 
   // 口径：被退回人次（到了但不符合要求被退回）。日期按到岗日期算。
   const supRows = ((arrivalTrackingDailySupplier ?? []) as CsvRow[]);
   const whRows = ((arrivalTrackingDailyWarehouse ?? []) as CsvRow[]);
   const reasonRows = ((arrivalTrackingDailyReason ?? []) as CsvRow[]);
-  const { start, end, min, max } = resolveRange(
-    [...supRows.map((r) => getValue(r, ["日期"])),
-     ...whRows.map((r) => getValue(r, ["日期"])),
-     ...reasonRows.map((r) => getValue(r, ["日期"]))],
-    startParam,
-    endParam
-  );
+  const demandRows = ((demandDaily ?? []) as CsvRow[]);
+  const allocRows = ((allocDaily ?? []) as CsvRow[]);
+  // 日期范围跟别的页对齐：需求 + 发单 + 到岗的日期并集（不只是到岗三张表）
+  const allDates = [
+    ...supRows.map((r) => getValue(r, ["日期"])),
+    ...whRows.map((r) => getValue(r, ["日期"])),
+    ...reasonRows.map((r) => getValue(r, ["日期"])),
+    ...demandRows.map((r) => getValue(r, ["日期"])),
+    ...allocRows.map((r) => getValue(r, ["日期"])),
+  ];
+  const { start, end, min, max } = resolveRange(allDates, startParam, endParam);
 
   const mapRows = (
     summed: Array<Record<string, unknown>>,
