@@ -2,6 +2,7 @@ import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import DateRangePicker from "@/components/DateRangePicker";
 import SupplierTable from "@/components/SupplierTable";
+import SupplierScatter from "@/components/SupplierScatter";
 import { getDashboardData, type CsvRow } from "@/lib/data";
 import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
 
@@ -159,81 +160,79 @@ export default async function SupplierPage({ searchParams }: any) {
             <DateRangePicker start={start} end={end} min={min} max={max} />
           </div>
 
-          {/* Hero insights */}
-          <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-800 p-8 text-white shadow-xl">
-            <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-violet-400/20 blur-3xl" />
-            <div className="relative">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-200">供应商表现 Supplier Performance</p>
-              <h2 className="mt-3 text-3xl font-bold tracking-tight">
-                {suppliers.length} 家供应商
-              </h2>
-              <p className="mt-1 text-sm font-medium text-indigo-200">
-                {suppliers.length} suppliers
+          {/* Hero：首页指标卡风格 */}
+          <p className="text-sm font-semibold uppercase tracking-widest text-indigo-500">供应商概览 Supplier Overview</p>
+          <section className="mt-3 grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">供应商数量 Suppliers</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">{suppliers.length}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">家供应商参与派遣</p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">达成率 Fulfillment</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">
+                {totalRequested > 0 ? formatPercent((totalAccepted / totalRequested) * 100) : "—"}
               </p>
-              <p className="mt-3 text-sm leading-6 text-indigo-100">
-                {formatNumber(totalAccepted)} / {formatNumber(totalRequested)} 人次最终被接受。
-                {best?.fulfillmentRate != null && <>达成率最高的是 <strong className="text-white">{best.name}</strong>（{formatPercent(best.fulfillmentRate)}），</>}
-                {worst?.fulfillmentRate != null && <>最低的是 <strong className="text-white">{worst.name}</strong>（{formatPercent(worst.fulfillmentRate)}）。</>}
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                已接受 ÷ 已发单 = {formatNumber(totalAccepted)} ÷ {formatNumber(totalRequested)}
               </p>
-              <div className="mt-6 grid max-w-3xl grid-cols-2 gap-4 md:grid-cols-4">
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalRequested)}</p>
-                  <p className="mt-1 text-xs text-indigo-200">总需求<br />Requested</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalFilled)}</p>
-                  <p className="mt-1 text-xs text-indigo-200">已派遣<br />Dispatched</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalArrived)}</p>
-                  <p className="mt-1 text-xs text-indigo-200">实际到场<br />Arrived</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalAccepted)}</p>
-                  <p className="mt-1 text-xs text-indigo-200">已接受<br />Accepted</p>
-                </div>
-              </div>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">已派遣 Dispatched</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">{formatNumber(totalFilled)}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                派遣率 {totalRequested > 0 ? formatPercent((totalFilled / totalRequested) * 100) : "—"}
+              </p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">已接受 Accepted</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-indigo-600">{formatNumber(totalAccepted)}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                {best?.fulfillmentRate != null && <>最高 {best.name} {formatPercent(best.fulfillmentRate)}</>}
+              </p>
             </div>
           </section>
 
-          {/* 需要盯紧 */}
+          {/* 散点图：发单量 vs 达成率 */}
           <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
-            <h3 className="text-lg font-bold">需要盯紧 Needs Attention</h3>
-            <p className="mt-1 text-xs text-slate-400">系统自动挑出最值得看的 3 个问题，不用自己翻表找</p>
-            <div className="mt-5 grid gap-4 md:grid-cols-3">
-              {dangerous && (
-                <div className="rounded-2xl border-l-4 border-rose-500 bg-rose-50/60 p-5">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">最危险 Highest Risk</p>
-                  <p className="mt-2 truncate text-base font-bold" title={dangerous.name}>{dangerous.name}</p>
-                  <p className="mt-1 text-2xl font-bold text-rose-600">{formatPercent(dangerous.fulfillmentRate ?? 0)}</p>
-                  <p className="mt-2 text-xs leading-5 text-slate-500">
-                    发单 {formatNumber(dangerous.requested)} 人次，达成率最低。量大率低，影响最大，优先处理。
-                  </p>
-                </div>
-              )}
-              {largestGap && (
-                <div className="rounded-2xl border-l-4 border-amber-500 bg-amber-50/60 p-5">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">缺口最大 Largest Gap</p>
-                  <p className="mt-2 truncate text-base font-bold" title={largestGap.name}>{largestGap.name}</p>
-                  <p className="mt-1 text-2xl font-bold text-amber-600">{formatNumber(largestGap.unfilled)}</p>
-                  <p className="mt-2 text-xs leading-5 text-slate-500">
-                    人次没派出去。发单 {formatNumber(largestGap.requested)}，只派出 {formatNumber(largestGap.filled)}。
-                  </p>
-                </div>
-              )}
-              {inflated && (
-                <div className="rounded-2xl border-l-4 border-indigo-500 bg-indigo-50/60 p-5">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">别被迷惑 Small Sample</p>
-                  <p className="mt-2 truncate text-base font-bold" title={inflated.name}>{inflated.name}</p>
-                  <p className="mt-1 text-2xl font-bold text-indigo-600">{formatPercent(inflated.fulfillmentRate ?? 0)}</p>
-                  <p className="mt-2 text-xs leading-5 text-slate-500">
-                    达成率看着高，但只做了 {formatNumber(inflated.requested)} 人次。样本太小，别当主力；可以多给单试试。
-                  </p>
-                </div>
-              )}
+            <h3 className="text-lg font-bold">发单量 vs 达成率 Volume vs Fulfillment</h3>
+            <p className="mt-1 text-xs text-slate-400">右下（量大率低）最危险 · 悬停圆点看详情</p>
+            <div className="mt-4">
+              <SupplierScatter suppliers={suppliers} />
             </div>
           </section>
+
+          {/* 需要盯紧：一条紧凑预警横条 */}
+          {dangerous && (
+            <section className="mt-6 flex items-start gap-3 rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 to-white p-4 shadow-sm md:p-5">
+              <span className="mt-0.5 text-xl">⚠️</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-800">
+                  需要盯紧 Needs Attention
+                  <span className="ml-2 font-normal text-slate-400">系统自动挑出最值得看的问题</span>
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  <strong className="text-rose-600">{dangerous.name}</strong>
+                  （发单 {formatNumber(dangerous.requested)} 人次）达成率仅{" "}
+                  <strong className="text-rose-600">{formatPercent(dangerous.fulfillmentRate ?? 0)}</strong>
+                  ，量大率低优先处理。
+                  {largestGap && largestGap.name !== dangerous.name && (
+                    <>
+                      另 <strong className="text-amber-600">{largestGap.name}</strong> 缺口最大，
+                      {formatNumber(largestGap.unfilled)} 人次没派出去。
+                    </>
+                  )}
+                  {inflated && (
+                    <>
+                      <strong className="text-indigo-600">{inflated.name}</strong> 达成率{" "}
+                      {formatPercent(inflated.fulfillmentRate ?? 0)} 看着高但只做了{" "}
+                      {formatNumber(inflated.requested)} 单，样本小别当主力。
+                    </>
+                  )}
+                </p>
+              </div>
+            </section>
+          )}
 
           {/* 供应商明细：表格 + 小bar + 排序切换 + 悬停详情 */}
           <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
