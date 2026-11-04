@@ -163,6 +163,11 @@ const supplierWarehouseGroup = [
     href: "/warehouse",
     icon: "warehouse" as SidebarIconType,
   },
+  {
+    name: "工种分析 Job Analysis",
+    href: "/job",
+    icon: "data" as SidebarIconType,
+  },
 ];
 
 const navigation = [
@@ -170,11 +175,6 @@ const navigation = [
     name: "总览 Overview",
     href: "/",
     icon: "overview" as SidebarIconType,
-  },
-  {
-    name: "工种分析 Job Analysis",
-    href: "/job",
-    icon: "data" as SidebarIconType,
   },
   {
     name: "被退回分析 Sent Back Analysis",

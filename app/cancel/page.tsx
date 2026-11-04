@@ -1,7 +1,6 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import DateRangePicker from "@/components/DateRangePicker";
-import CancelScatter from "@/components/CancelScatter";
 import CancelTable from "@/components/CancelTable";
 import { getDashboardData, type CsvRow } from "@/lib/data";
 import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
@@ -142,17 +141,6 @@ export default async function CancelPage({ searchParams }: any) {
   const topWh = warehouses[0];
   const namedSuppliers = suppliers.filter((s) => s.name !== "未分类");
 
-  const scatterRows = suppliers.map((s) => {
-    const total = s.ended + s.warnings;
-    return {
-      name: s.name,
-      total,
-      ended: s.ended,
-      warnings: s.warnings,
-      eoaShare: total > 0 ? (s.ended / total) * 100 : null,
-    };
-  }).filter((r) => r.total > 0);
-
   const periodLabel = start && end
     ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
     : "—";
@@ -216,23 +204,6 @@ export default async function CancelPage({ searchParams }: any) {
               <p className="mt-2 text-xs leading-5 text-slate-400">
                 {topWh && <>最多 {topWh.name} 被结束 {formatNumber(topWh.ended)} 人次 · 占全部被结束 {formatPercent(totalEnded > 0 ? (topWh.ended / totalEnded) * 100 : 0)}</>}
               </p>
-            </div>
-          </section>
-
-          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
-            <h3 className="text-lg font-bold">总人次 vs 被结束占比 Total vs EOA Share</h3>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <p className="text-xs text-slate-400">右上角（量大、基本都是被结束）最值得看，圆点越大被结束越多</p>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
-                </span>
-                悬停圆点看详情
-              </span>
-            </div>
-            <div className="mt-4">
-              <CancelScatter rows={scatterRows} />
             </div>
           </section>
 

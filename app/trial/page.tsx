@@ -1,7 +1,6 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import DateRangePicker from "@/components/DateRangePicker";
-import SentBackScatter from "@/components/SentBackScatter";
 import SentBackTable from "@/components/SentBackTable";
 import { getDashboardData, type CsvRow } from "@/lib/data";
 import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
@@ -167,26 +166,6 @@ export default async function TrialFailurePage({ searchParams }: any) {
   const top3WhShare = total > 0
     ? (warehouses.slice(0, 3).reduce((s, r) => s + r.failure, 0) / total) * 100 : 0;
 
-  // 散点图：按供应商，横轴拟到岗量，纵轴被退回率（被退回 ÷ 有效到岗，剔除 No Show）
-  const scatterRows = sumByKey(filterByDateRange(supRows, start, end), "供应商", ["被退回人次", "拟到岗人次", "NoShow人次", "已接受人次"])
-    .map((r) => {
-      const scheduled = Number(r["拟到岗人次"] ?? 0) || 0;
-      const sentBack = Number(r["被退回人次"] ?? 0) || 0;
-      const noshow = Number(r["NoShow人次"] ?? 0) || 0;
-      const effective = scheduled - noshow;
-      return {
-        name: String(r["供应商"] ?? "未分类"),
-        scheduled,
-        sentBack,
-        rate: effective > 0 ? (sentBack / effective) * 100 : null,
-        share: total > 0 ? (sentBack / total) * 100 : 0,
-        effectiveArrived: effective,
-        noshow,
-        accepted: Number(r["已接受人次"] ?? 0) || 0,
-      };
-    })
-    .filter((r) => r.name !== "未分类" && r.scheduled > 0);
-
   const periodLabel = start && end
     ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
     : "—";
@@ -250,24 +229,6 @@ export default async function TrialFailurePage({ searchParams }: any) {
               <p className="mt-2 text-xs leading-5 text-slate-400">
                 {topWh && <>最多 {topWh.name} {formatNumber(topWh.failure)} 人次 · 前三占比 {formatPercent(top3WhShare)}</>}
               </p>
-            </div>
-          </section>
-
-          {/* 散点图：按供应商，拟到岗量 vs 被退回率 */}
-          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
-            <h3 className="text-lg font-bold">拟到岗量 vs 被退回率 Scheduled vs Sent-back Rate</h3>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <p className="text-xs text-slate-400">上面（退回率高）最值得看，圆点越大被退回越多</p>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
-                </span>
-                悬停圆点看详情
-              </span>
-            </div>
-            <div className="mt-4">
-              <SentBackScatter rows={scatterRows} />
             </div>
           </section>
 
