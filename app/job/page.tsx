@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import DateRangePicker from "@/components/DateRangePicker";
+import JobTable, { JobScatter } from "@/components/JobTable";
 import { getDashboardData, type CsvRow } from "@/lib/data";
 import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
 
@@ -121,11 +122,23 @@ export default async function JobPage({ searchParams }: any) {
 
   const totalDemand = jobs.reduce((s, x) => s + x.demand, 0);
   const totalIssued = jobs.reduce((s, x) => s + (x.issued ?? 0), 0);
+  const totalFilled = jobs.reduce((s, x) => s + (x.filled ?? 0), 0);
   const totalArrived = jobs.reduce((s, x) => s + (x.arrived ?? 0), 0);
   const totalAccepted = jobs.reduce((s, x) => s + (x.accepted ?? 0), 0);
-  const mostDemanded = jobs[0] ?? null;
   const worst = [...jobs].sort((a, b) => (a.fulfillmentRate ?? 999) - (b.fulfillmentRate ?? 999))[0] ?? null;
   const best = [...jobs].sort((a, b) => (b.fulfillmentRate ?? -1) - (a.fulfillmentRate ?? -1))[0] ?? null;
+
+  /* 需要盯紧：自动挑问题（逻辑与供应商页一致，量按需求算） */
+  // 1. 最危险：量大（>=150）但达成率最低
+  const dangerous = jobs
+    .filter((j) => j.fulfillmentRate !== null && j.demand >= 150)
+    .sort((a, b) => (a.fulfillmentRate ?? 999) - (b.fulfillmentRate ?? 999))[0] ?? null;
+  // 2. 缺口最大：需求 - 已派遣
+  const largestGap = [...jobs].sort((a, b) => (b.demand - (b.filled ?? 0)) - (a.demand - (a.filled ?? 0)))[0] ?? null;
+  // 3. 样本小但达成率虚高：量小（<150）但达成率>=80
+  const inflated = jobs
+    .filter((j) => j.fulfillmentRate !== null && j.demand < 150 && (j.fulfillmentRate ?? 0) >= 80)
+    .sort((a, b) => (b.fulfillmentRate ?? -1) - (a.fulfillmentRate ?? -1))[0] ?? null;
 
   const periodLabel = start && end
     ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
@@ -161,141 +174,103 @@ export default async function JobPage({ searchParams }: any) {
             <DateRangePicker start={start} end={end} min={min} max={max} />
           </div>
 
-          {/* Hero */}
-          <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-violet-600 via-violet-700 to-purple-800 p-8 text-white shadow-xl">
-            <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-purple-400/20 blur-3xl" />
-            <div className="relative">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-200">工种需求与达成 Job Demand & Fulfillment</p>
-              <h2 className="mt-3 text-3xl font-bold tracking-tight">
-                {jobs.length} 个工种
-              </h2>
-              <p className="mt-1 text-sm font-medium text-violet-200">
-                {jobs.length} jobs
+          {/* Hero：供应商页同款白卡 */}
+          <p className="text-sm font-semibold uppercase tracking-widest text-indigo-500">工种概览 Job Overview</p>
+          <section className="mt-3 grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">工种数量 Jobs</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">{jobs.length}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">个工种有需求</p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">达成率 Fulfillment</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">
+                {totalDemand > 0 ? formatPercent((totalAccepted / totalDemand) * 100) : "—"}
               </p>
-              <p className="mt-3 text-sm leading-6 text-violet-100">
-                {formatNumber(totalAccepted)} / {formatNumber(totalDemand)} 人次最终被接受，
-                实际到场 {formatNumber(totalArrived)} 人次。
-                {mostDemanded && <>需求最多的是 <strong className="text-white">{mostDemanded.name}</strong>（{formatNumber(mostDemanded.demand)} 人次），</>}
-                {worst?.fulfillmentRate != null && <>达成率最低的是 <strong className="text-white">{worst.name}</strong>（{formatPercent(worst.fulfillmentRate)}）。</>}
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                已接受 ÷ 需求 = {formatNumber(totalAccepted)} ÷ {formatNumber(totalDemand)}
               </p>
-              <div className="mt-6 grid max-w-3xl grid-cols-2 gap-4 md:grid-cols-4">
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalDemand)}</p>
-                  <p className="mt-1 text-xs text-violet-200">总需求<br />Demand</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalIssued)}</p>
-                  <p className="mt-1 text-xs text-violet-200">已发单<br />Issued</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalArrived)}</p>
-                  <p className="mt-1 text-xs text-violet-200">实际到场<br />Arrived</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalAccepted)}</p>
-                  <p className="mt-1 text-xs text-violet-200">已接受<br />Accepted</p>
-                </div>
-              </div>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">已派遣 Dispatched</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">{formatNumber(totalFilled)}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                派遣率 {totalIssued > 0 ? formatPercent((totalFilled / totalIssued) * 100) : "—"} · 已发单 {formatNumber(totalIssued)}
+              </p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">已接受 Accepted</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-indigo-600">{formatNumber(totalAccepted)}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                {best?.fulfillmentRate != null && <>最高 {best.name} {formatPercent(best.fulfillmentRate)}</>}
+              </p>
             </div>
           </section>
 
-          {/* Spotlight */}
-          <section className="mt-6 grid gap-4 md:grid-cols-3">
-            {mostDemanded && (
-              <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">📦 需求最多 Most Demanded</p>
-                <p className="mt-3 truncate text-lg font-bold">{mostDemanded.name}</p>
-                <p className="mt-1 text-3xl font-bold text-emerald-600">{formatNumber(mostDemanded.demand)}</p>
-                <p className="mt-2 text-xs text-slate-500">需求 Demand · 已发单 Issued {formatNumber(mostDemanded.issued ?? 0)}</p>
-              </div>
-            )}
-            {worst?.fulfillmentRate != null && (
-              <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">⚠️ 达成率最低 Attention</p>
-                <p className="mt-3 truncate text-lg font-bold">{worst.name}</p>
-                <p className="mt-1 text-3xl font-bold text-rose-600">{formatPercent(worst.fulfillmentRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(worst.accepted ?? 0)} / {formatNumber(worst.demand)} 已接受 accepted</p>
-              </div>
-            )}
-            {best?.fulfillmentRate != null && (
-              <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">🏆 达成率最高 Best</p>
-                <p className="mt-3 truncate text-lg font-bold">{best.name}</p>
-                <p className="mt-1 text-3xl font-bold text-amber-600">{formatPercent(best.fulfillmentRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(best.accepted ?? 0)} / {formatNumber(best.demand)} 已接受 accepted</p>
-              </div>
-            )}
-          </section>
-
-          {/* Visual ranking */}
+          {/* 散点图：需求量 vs 达成率 */}
           <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold">工种排名 Job Ranking</h3>
-                <p className="mt-1 text-xs text-slate-400">按需求数从多到少排序 Rank by Demand (High to Low) · 数据来源：用工需求池 + 发单详情 + 人员到岗表 Source: Labor Demand Pool + Allocation + Arrival Tracking</p>
-              </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">{jobs.length} 个工种 jobs</span>
+            <h3 className="text-lg font-bold">需求量 vs 达成率 Demand vs Fulfillment</h3>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-slate-400">右下（量大率低）最危险</p>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
+                </span>
+                悬停圆点看详情
+              </span>
             </div>
+            <div className="mt-4">
+              <JobScatter jobs={jobs.map((j) => ({
+                name: j.name,
+                demand: j.demand,
+                issued: j.issued,
+                filled: j.filled,
+                arrived: j.arrived,
+                accepted: j.accepted,
+                fulfillmentRate: j.fulfillmentRate,
+              }))} />
+            </div>
+          </section>
 
-            {jobs.length === 0 ? (
-              <p className="py-12 text-center text-sm text-slate-400">
-                暂无工种数据，请先跑管线生成 job_demand_summary。No job data yet — run the pipeline first.
-              </p>
-            ) : (
-              <div className="mt-6 space-y-5">
-                {jobs.map((j, i) => {
-                  const fr = j.fulfillmentRate ?? 0;
-                  const barColor = fr >= 80 ? "from-emerald-400 to-emerald-600"
-                    : fr >= 60 ? "from-amber-400 to-amber-600"
-                    : "from-rose-400 to-rose-600";
-                  const textColor = fr >= 80 ? "text-emerald-600"
-                    : fr >= 60 ? "text-amber-600" : "text-rose-600";
-                  return (
-                    <div key={j.name} className="group rounded-2xl border border-slate-100 p-4 transition hover:border-violet-100 hover:bg-violet-50/30 md:p-5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
-                            i === 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
-                          }`}>{i + 1}</span>
-                          <span className="truncate text-sm font-semibold">{j.name}</span>
-                        </div>
-                        <span className={`ml-4 shrink-0 text-lg font-bold ${textColor}`}>
-                          {j.fulfillmentRate !== null ? formatPercent(j.fulfillmentRate) : "—"}
-                        </span>
-                      </div>
-                      <div className="ml-11 mt-2 h-3 overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className={`h-full rounded-full bg-gradient-to-r ${barColor} transition-all duration-700`}
-                          style={{ width: `${Math.min(fr, 100)}%` }}
-                        />
-                      </div>
-                      <div className="ml-11 mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-400 md:grid-cols-5">
-                        <span className="font-medium text-slate-600">{formatNumber(j.demand)} 需求 Demand</span>
-                        {j.issued !== null ? (
-                          <span>{formatNumber(j.issued)} 已发单 Issued</span>
-                        ) : (
-                          <span className="text-slate-300">已发单 —</span>
-                        )}
-                        {j.arrived !== null ? (
-                          <span>{formatNumber(j.arrived)} 实际到场 Arrived</span>
-                        ) : (
-                          <span className="text-slate-300">实际到场 —</span>
-                        )}
-                        {j.accepted !== null ? (
-                          <span className="font-medium text-emerald-600">
-                            {formatNumber(j.accepted)} 已接受 Accepted
-                          </span>
-                        ) : (
-                          <span className="text-slate-300">已接受 —</span>
-                        )}
-                        <span className="text-slate-500">达成率 = 已接受 ÷ 需求</span>
-                      </div>
-                    </div>
-                  );
-                })}
+          {/* 需要盯紧：一条紧凑预警横条 */}
+          {dangerous && (
+            <section className="mt-6 flex items-start gap-3 rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 to-white p-4 shadow-sm md:p-5">
+              <span className="mt-0.5 text-xl">⚠️</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-800">
+                  需要盯紧 Needs Attention
+                  <span className="ml-2 font-normal text-slate-400">系统自动挑出最值得看的问题</span>
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  <strong className="text-rose-600">{dangerous.name}</strong>
+                  （需求 {formatNumber(dangerous.demand)} 人次）达成率仅{" "}
+                  <strong className="text-rose-600">{formatPercent(dangerous.fulfillmentRate ?? 0)}</strong>
+                  ，量大率低优先处理。
+                  {largestGap && largestGap.name !== dangerous.name && (
+                    <>
+                      另 <strong className="text-amber-600">{largestGap.name}</strong> 缺口最大，
+                      {formatNumber(largestGap.demand - (largestGap.filled ?? 0))} 人次没派出去。
+                    </>
+                  )}
+                  {inflated && (
+                    <>
+                      <strong className="text-indigo-600">{inflated.name}</strong> 达成率{" "}
+                      {formatPercent(inflated.fulfillmentRate ?? 0)} 看着高但需求只有{" "}
+                      {formatNumber(inflated.demand)} 人次，样本小别当主力。
+                    </>
+                  )}
+                </p>
               </div>
-            )}
+            </section>
+          )}
+
+          {/* 工种明细：跟供应商/仓库表同一套格式 */}
+          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
+            <h3 className="text-lg font-bold">工种明细 Job Details</h3>
+            <div className="mt-4">
+              <JobTable jobs={jobs} />
+            </div>
           </section>
 
           {/* Footer */}

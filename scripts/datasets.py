@@ -16,6 +16,11 @@ datasets.py — 由干净记录构建 dashboard.json 的数据集
   - arrival_tracking_*:   人员到岗表（用户口径：NO SHOW 未勾选=到岗；
                           到岗且无原因=已接受）。实际到场 = 到岗人次 − NoShow人次。
   - match_*_arrival:      发单详情（已派遣）× 到岗表（实到），到岗率 = 实到 ÷ 已派遣。
+  - eoa_daily_*:          删除表（End of Assignment / Warning），人次不去重。
+                          被结束 = End of Assignment，其他都算警告（口头/书面/
+                          书面+最终警告都算警告）。按天×供应商/仓库/原因汇总，
+                          仓库按数字归到洛杉矶X号仓。被结束不进首日达成率，
+                          前端被结束页（/cancel）只用这三个数据集。
 
   按天数据集（*_daily / demand_daily_* / alloc_daily_*）：
   前端日期筛选的底料。每个指标按它自己的日期维度汇总：
@@ -342,6 +347,7 @@ ALLOC_DAILY_COLUMNS = ["日期", "已发单人数", "已派遣人数", "未派�
 ALLOC_DAILY_SUPPLIER_COLUMNS = ["日期", "供应商", "已发单人数", "已派遣人数", "未派遣人数"]
 ALLOC_DAILY_WAREHOUSE_COLUMNS = ["日期", "仓库", "已发单人数", "已派遣人数", "未派遣人数"]
 ALLOC_DAILY_JOB_COLUMNS = ["日期", "工种", "已发单人数", "已派遣人数", "未派遣人数"]
+ALLOC_DAILY_SUPPLIER_WAREHOUSE_COLUMNS = ["日期", "供应商", "仓库", "已发单人数", "已派遣人数", "未派遣人数"]
 
 
 def build_demand_daily(demand_rows):
@@ -407,6 +413,33 @@ def build_alloc_daily_job(alloc_rows):
     return ALLOC_DAILY_JOB_COLUMNS, out
 
 
+def build_alloc_daily_supplier_warehouse(alloc_rows):
+    """已发单/已派遣按需求日期×供应商×仓库汇总（仓库页供应商×仓库交叉分析用）"""
+    agg = _alloc_daily_agg(
+        alloc_rows,
+        lambda r: (r["需求日期"] or "未分类", r["供应商"] or "未分类",
+                   r["需求仓"] or "未分类"))
+    out = [{"日期": k[0], "供应商": k[1], "仓库": k[2], **v}
+           for k, v in sorted(agg.items())]
+    return ALLOC_DAILY_SUPPLIER_WAREHOUSE_COLUMNS, out
+
+
+ALLOC_DAILY_SUPPLIER_JOB_COLUMNS = [
+    "日期", "供应商", "工种", "已发单人数", "已派遣人数", "未派遣人数",
+]
+
+
+def build_alloc_daily_supplier_job(alloc_rows):
+    """已发单/已派遣按需求日期×供应商×工种汇总（Agency 页按岗位分析用）"""
+    agg = _alloc_daily_agg(
+        alloc_rows,
+        lambda r: (r["需求日期"] or "未分类", r["供应商"] or "未分类",
+                   r["工种"] or "未分类"))
+    out = [{"日期": k[0], "供应商": k[1], "工种": k[2], **v}
+           for k, v in sorted(agg.items())]
+    return ALLOC_DAILY_SUPPLIER_JOB_COLUMNS, out
+
+
 # ------------------------------------------------------------------
 # 人员到岗表（用户口径：NO SHOW 未勾选=到岗；到岗且无原因=已接受）
 # ------------------------------------------------------------------
@@ -438,6 +471,15 @@ ARRIVAL_DAILY_JOB_COLUMNS = [
     "日期", "工种", "拟到岗人次", "到岗人次", "已接受人次", "NoShow人次", "被退回人次",
 ]
 ARRIVAL_DAILY_REASON_COLUMNS = ["日期", "不符合要求原因", "人次"]
+ARRIVAL_DAILY_SUPPLIER_WAREHOUSE_COLUMNS = [
+    "日期", "供应商", "仓库", "拟到岗人次", "到岗人次", "已接受人次", "NoShow人次", "被退回人次",
+]
+ARRIVAL_DAILY_SUPPLIER_JOB_COLUMNS = [
+    "日期", "供应商", "工种", "拟到岗人次", "到岗人次", "已接受人次", "NoShow人次", "被退回人次",
+]
+ARRIVAL_DAILY_SUPPLIER_REASON_COLUMNS = [
+    "日期", "供应商", "不符合要求原因", "人次",
+]
 
 
 def _at_stats(rows):
@@ -509,22 +551,41 @@ def build_arrival_daily(at_rows):
     by_sup = defaultdict(list)
     by_wh = defaultdict(list)
     by_job = defaultdict(list)
+    by_cross = defaultdict(list)
     by_reason = defaultdict(int)
+    by_sup_job = defaultdict(list)
+    by_sup_reason = defaultdict(int)
     for r in at_rows:
         d = r["到岗日期"] or "未分类"
         by_sup[(d, r["机构"] or "未分类")].append(r)
         by_wh[(d, r["仓库"] or "未分类")].append(r)
         by_job[(d, r.get("职位") or "未分类")].append(r)
+        # 交叉：仓库名先归一化成中文（洛杉矶X号仓），跟发单详情的需求仓对齐
+        by_cross[(d, r["机构"] or "未分类",
+                  _norm_wh_at(r["仓库"] or "未分类"))].append(r)
         if r["不符合要求原因"]:
             by_reason[(d, r["不符合要求原因"])] += 1
+        by_sup_job[(d, r["机构"] or "未分类",
+                    r.get("职位") or "未分类")].append(r)
+        if r["不符合要求原因"]:
+            by_sup_reason[(d, r["机构"] or "未分类",
+                           r["不符合要求原因"])] += 1
     sup_rows = [_at_row({"日期": k[0], "供应商": k[1]}, _at_stats(v))
                 for k, v in sorted(by_sup.items())]
     wh_rows = [_at_row({"日期": k[0], "仓库": k[1]}, _at_stats(v))
               for k, v in sorted(by_wh.items())]
     job_rows = [_at_row({"日期": k[0], "工种": k[1]}, _at_stats(v))
                 for k, v in sorted(by_job.items())]
+    cross_rows = [_at_row({"日期": k[0], "供应商": k[1], "仓库": k[2]},
+                          _at_stats(v))
+                  for k, v in sorted(by_cross.items())]
     reason_rows = [{"日期": k[0], "不符合要求原因": k[1], "人次": v}
                    for k, v in sorted(by_reason.items())]
+    sup_job_rows = [_at_row({"日期": k[0], "供应商": k[1], "工种": k[2]},
+                            _at_stats(v))
+                    for k, v in sorted(by_sup_job.items())]
+    sup_reason_rows = [{"日期": k[0], "供应商": k[1], "不符合要求原因": k[2], "人次": v}
+                       for k, v in sorted(by_sup_reason.items())]
     return {
         "arrival_tracking_daily_supplier": (
             ARRIVAL_DAILY_SUPPLIER_COLUMNS, sup_rows),
@@ -532,8 +593,14 @@ def build_arrival_daily(at_rows):
             ARRIVAL_DAILY_WAREHOUSE_COLUMNS, wh_rows),
         "arrival_tracking_daily_job": (
             ARRIVAL_DAILY_JOB_COLUMNS, job_rows),
+        "arrival_tracking_daily_supplier_warehouse": (
+            ARRIVAL_DAILY_SUPPLIER_WAREHOUSE_COLUMNS, cross_rows),
         "arrival_tracking_daily_reason": (
             ARRIVAL_DAILY_REASON_COLUMNS, reason_rows),
+        "arrival_daily_supplier_job": (
+            ARRIVAL_DAILY_SUPPLIER_JOB_COLUMNS, sup_job_rows),
+        "arrival_daily_supplier_reason": (
+            ARRIVAL_DAILY_SUPPLIER_REASON_COLUMNS, sup_reason_rows),
     }
 
 
@@ -547,7 +614,10 @@ ARRIVAL_TRACKING_EMPTY_SCHEMAS = {
     "arrival_tracking_daily_supplier": ARRIVAL_DAILY_SUPPLIER_COLUMNS,
     "arrival_tracking_daily_warehouse": ARRIVAL_DAILY_WAREHOUSE_COLUMNS,
     "arrival_tracking_daily_job": ARRIVAL_DAILY_JOB_COLUMNS,
+    "arrival_tracking_daily_supplier_warehouse": ARRIVAL_DAILY_SUPPLIER_WAREHOUSE_COLUMNS,
     "arrival_tracking_daily_reason": ARRIVAL_DAILY_REASON_COLUMNS,
+    "arrival_daily_supplier_job": ARRIVAL_DAILY_SUPPLIER_JOB_COLUMNS,
+    "arrival_daily_supplier_reason": ARRIVAL_DAILY_SUPPLIER_REASON_COLUMNS,
 }
 
 
@@ -633,6 +703,74 @@ MATCH_EMPTY_SCHEMAS = {
 
 
 # ------------------------------------------------------------------
+# 删除表：End of Assignment / Warning（被结束页 /cancel 用）
+# ------------------------------------------------------------------
+# 口径：
+#   被结束 = 类型是 End of Assignment 的行
+#   警告   = 其他所有行（口头、书面、书面+最终警告都算警告，
+#            文件里“Writen”的拼写不影响分类，因为不是 End of Assignment）
+#   人次不去重：同一工号多次出现算多次，跟被退回页一致。
+#   仓库只按数字归到洛杉矶X号仓——注意不能复用上面的 _norm_wh_at，
+#   因为删除表仓库里的括号是地址（如 CA #21 SULTANA (8375 SULTANA
+#   AVENUE, ...)），复用会把地址也拼进仓名；这里只取数字。
+#   供应商短名原样留给前端：前端 Cancel 页自己有短名 -> 全名的
+#   别名对照（CITI STAFF -> CitiStaff Solutions 等），管线不改名。
+
+EOA_DAILY_SUPPLIER_COLUMNS = ["日期", "供应商", "结束人次", "警告人次"]
+EOA_DAILY_WAREHOUSE_COLUMNS = ["日期", "仓库", "结束人次", "警告人次"]
+EOA_DAILY_REASON_COLUMNS = ["日期", "原因", "结束人次", "警告人次"]
+
+
+def _norm_wh_eoa(name):
+    m = _re.search(r'(\d+)', name or "")
+    if not m:
+        return name or "未分类"
+    return f"洛杉矶{m.group(1)}号仓"
+
+
+def _eoa_agg(eoa_rows, key_fn):
+    agg = defaultdict(lambda: {"结束人次": 0, "警告人次": 0})
+    for r in eoa_rows:
+        a = agg[key_fn(r)]
+        if r.get("是否被结束"):
+            a["结束人次"] += 1
+        else:
+            a["警告人次"] += 1
+    return agg
+
+
+def build_eoa(eoa_rows):
+    """删除表 -> 3 个按天数据集（前端日期筛选的底料）"""
+    sup_agg = _eoa_agg(
+        eoa_rows,
+        lambda r: (r["日期"] or "未分类", r["供应商短名"] or "未分类"))
+    wh_agg = _eoa_agg(
+        eoa_rows,
+        lambda r: (r["日期"] or "未分类", _norm_wh_eoa(r["仓库"])))
+    reason_agg = _eoa_agg(
+        eoa_rows,
+        lambda r: (r["日期"] or "未分类", r["原因"] or "未分类"))
+    sup_rows = [{"日期": k[0], "供应商": k[1], **v}
+                for k, v in sorted(sup_agg.items())]
+    wh_rows = [{"日期": k[0], "仓库": k[1], **v}
+               for k, v in sorted(wh_agg.items())]
+    reason_rows = [{"日期": k[0], "原因": k[1], **v}
+                   for k, v in sorted(reason_agg.items())]
+    return {
+        "eoa_daily_supplier": (EOA_DAILY_SUPPLIER_COLUMNS, sup_rows),
+        "eoa_daily_warehouse": (EOA_DAILY_WAREHOUSE_COLUMNS, wh_rows),
+        "eoa_daily_reason": (EOA_DAILY_REASON_COLUMNS, reason_rows),
+    }
+
+
+EOA_EMPTY_SCHEMAS = {
+    "eoa_daily_supplier": EOA_DAILY_SUPPLIER_COLUMNS,
+    "eoa_daily_warehouse": EOA_DAILY_WAREHOUSE_COLUMNS,
+    "eoa_daily_reason": EOA_DAILY_REASON_COLUMNS,
+}
+
+
+# ------------------------------------------------------------------
 # 空数据集
 # ------------------------------------------------------------------
 
@@ -668,6 +806,8 @@ def build_all(raw):
         "alloc_daily_supplier": build_alloc_daily_supplier(alloc_rows),
         "alloc_daily_warehouse": build_alloc_daily_warehouse(alloc_rows),
         "alloc_daily_job": build_alloc_daily_job(alloc_rows),
+        "alloc_daily_supplier_warehouse": build_alloc_daily_supplier_warehouse(alloc_rows),
+        "alloc_daily_supplier_job": build_alloc_daily_supplier_job(alloc_rows),
     }
     at_rows = raw.get("arrival_tracking", [])
     if at_rows:
@@ -680,5 +820,11 @@ def build_all(raw):
         datasets.update(build_arrival_match(alloc_rows, at_rows))
     else:
         for name, columns in MATCH_EMPTY_SCHEMAS.items():
+            datasets[name] = empty_dataset(columns)
+    eoa_rows = raw.get("eoa", [])
+    if eoa_rows:
+        datasets.update(build_eoa(eoa_rows))
+    else:
+        for name, columns in EOA_EMPTY_SCHEMAS.items():
             datasets[name] = empty_dataset(columns)
     return datasets

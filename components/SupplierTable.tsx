@@ -138,8 +138,8 @@ export default function SupplierTable({ suppliers }: { suppliers?: SupplierRow[]
                       <span className={"pointer-events-none absolute left-0 z-30 hidden w-80 group-hover:block " + cardPos}>
                         <span className="mt-1 block rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-2xl">
                           <span className="block truncate text-base font-bold text-slate-900">{s.name}</span>
-                          <span className="mt-1 block text-xs text-slate-500">
-                            发单 <span className="font-bold tabular-nums text-slate-900">{formatNumber(s.requested)}</span> 人次 · Issued
+                          <span className="mt-0.5 block text-[11px] font-normal text-slate-400">
+                            发单 {formatNumber(s.requested)} 人次 · Issued
                           </span>
                           <span className="mt-3 block space-y-2.5">
                             <span className="flex items-center justify-between text-sm">

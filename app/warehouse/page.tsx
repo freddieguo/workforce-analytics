@@ -1,6 +1,8 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import DateRangePicker from "@/components/DateRangePicker";
+import WarehouseTable from "@/components/WarehouseTable";
+import WarehouseScatter from "@/components/WarehouseScatter";
 import { getDashboardData, type CsvRow } from "@/lib/data";
 import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
 
@@ -33,28 +35,27 @@ function getValue(row: CsvRow, candidates: string[]) {
   return "";
 }
 
+/* 仓库名归一化：中文"洛杉矶19号仓(TT)" vs 英文"Los Angeles Warehouse 19 (TT)"/"LA-21"
+   按编号+括号后缀匹配，如 19|TT；中邮=CP */
+function warehouseKey(name: string): string {
+  const num = name.match(/(\d+)/)?.[1] ?? "";
+  let suffix = name.match(/\(([^)]+)\)/)?.[1]?.toUpperCase().trim() ?? "";
+  const suffixMap: Record<string, string> = { "中邮": "CP" };
+  suffix = suffixMap[suffix] ?? suffix;
+  return `${num}|${suffix}`;
+}
+
 type WarehouseRow = {
   name: string;
   requested: number;
   filled: number;
   unfilled: number;
-  rate: number;
-  arrived: number | null;
+  dispatchRate: number;
+  actualArrived: number | null;
   arrivalRate: number | null;
   accepted: number | null;
-  acceptanceRate: number | null;
+  fulfillmentRate: number | null;
 };
-
-/* 仓库名归一化：中文"洛杉矶19号仓(TT)" vs 英文"Los Angeles Warehouse 19 (TT)"/"LA-21"
-   按编号+括号后缀匹配，如 19|TT */
-function warehouseKey(name: string): string {
-  const num = name.match(/(\d+)/)?.[1] ?? "";
-  let suffix = name.match(/\(([^)]+)\)/)?.[1]?.toUpperCase().trim() ?? "";
-  // 中文后缀转英文缩写：中邮=CP
-  const suffixMap: Record<string, string> = { "中邮": "CP" };
-  suffix = suffixMap[suffix] ?? suffix;
-  return `${num}|${suffix}`;
-}
 
 export default async function WarehousePage({ searchParams }: any) {
   const params = (await searchParams) ?? {};
@@ -62,7 +63,12 @@ export default async function WarehousePage({ searchParams }: any) {
   const startParam = typeof params.start === "string" ? params.start : saved.start;
   const endParam = typeof params.end === "string" ? params.end : saved.end;
 
-  const { allocDailyWarehouse, arrivalTrackingDailyWarehouse, demandDaily, allocDaily } = getDashboardData();
+  const {
+    allocDailyWarehouse,
+    arrivalTrackingDailyWarehouse,
+    demandDaily,
+    allocDaily,
+  } = getDashboardData();
 
   // 日期范围：跟别的页对齐（需求 + 发单 + 到岗的日期并集）
   const allocRows = ((allocDailyWarehouse ?? []) as CsvRow[]);
@@ -76,13 +82,13 @@ export default async function WarehousePage({ searchParams }: any) {
     endParam
   );
 
-  // 选定范围内按仓库汇总：发单（已发单/已派遣）+ 到岗（到岗/NoShow/已接受）
+  /* ---------- 按仓库汇总（与供应商页同口径：达成率 = 已接受 ÷ 已发单） ---------- */
   const allocByWh = new Map<string, Record<string, unknown>>(
     sumByKey(filterByDateRange(allocRows, start, end), "仓库",
       ["已发单人数", "已派遣人数", "未派遣人数"])
       .map((r) => [String(r["仓库"]), r])
   );
-  // 到岗表按仓库：实际到场、已接受（按归一化key匹配中英文仓名）
+  // 到岗按仓库：实际到场、已接受（按归一化key匹配中英文仓名）
   const atWhMap = new Map<string, { actualArrived: number; accepted: number }>();
   for (const r of sumByKey(filterByDateRange(atRows, start, end), "仓库",
     ["到岗人次", "NoShow人次", "已接受人次"])) {
@@ -106,11 +112,10 @@ export default async function WarehousePage({ searchParams }: any) {
       const requested = Number(a["已发单人数"] ?? 0);
       const filled = Number(a["已派遣人数"] ?? 0);
       const unfilled = Math.max(requested - filled, 0);
-      const rate = requested > 0 ? (filled / requested) * 100 : 0;
+      const dispatchRate = requested > 0 ? (filled / requested) * 100 : 0;
       const at = findAtData(name);
       const actualArrived = at?.actualArrived ?? null;
       const accepted = at?.accepted ?? null;
-      // 到场率 = 实际到场 ÷ 已派遣
       const arrivalRate = actualArrived !== null && filled > 0
         ? (actualArrived / filled) * 100 : null;
       return {
@@ -118,27 +123,31 @@ export default async function WarehousePage({ searchParams }: any) {
         requested,
         filled,
         unfilled,
-        rate,
-        arrived: actualArrived,
+        dispatchRate,
+        actualArrived,
         arrivalRate,
         accepted,
-        acceptanceRate:
-          accepted !== null && requested > 0
-            ? (accepted / requested) * 100
-            : null,
+        fulfillmentRate: accepted !== null && requested > 0 ? (accepted / requested) * 100 : null,
       };
     })
     .filter((w) => w.name !== "未分类")
-    .sort((a, b) => (b.acceptanceRate ?? -1) - (a.acceptanceRate ?? -1));
+    .sort((a, b) => (b.fulfillmentRate ?? -1) - (a.fulfillmentRate ?? -1));
 
   const totalRequested = warehouses.reduce((s, x) => s + x.requested, 0);
   const totalFilled = warehouses.reduce((s, x) => s + x.filled, 0);
-  const totalUnfilled = warehouses.reduce((s, x) => s + x.unfilled, 0);
-  const totalArrived = warehouses.reduce((s, x) => s + (x.arrived ?? 0), 0);
   const totalAccepted = warehouses.reduce((s, x) => s + (x.accepted ?? 0), 0);
   const best = warehouses[0] ?? null;
-  const worst = [...warehouses].sort((a, b) => (a.acceptanceRate ?? 999) - (b.acceptanceRate ?? 999))[0] ?? null;
   const largestGap = [...warehouses].sort((a, b) => b.unfilled - a.unfilled)[0] ?? null;
+
+  /* 需要盯紧：自动挑问题（逻辑与供应商页一致） */
+  // 1. 最危险：量大（>=150）但达成率最低
+  const dangerous = warehouses
+    .filter((w) => w.fulfillmentRate !== null && w.requested >= 150)
+    .sort((a, b) => (a.fulfillmentRate ?? 999) - (b.fulfillmentRate ?? 999))[0] ?? null;
+  // 2. 样本小但达成率虚高：量小（<150）但达成率>=80
+  const inflated = warehouses
+    .filter((w) => w.fulfillmentRate !== null && w.requested < 150 && (w.fulfillmentRate ?? 0) >= 80)
+    .sort((a, b) => (b.fulfillmentRate ?? -1) - (a.fulfillmentRate ?? -1))[0] ?? null;
 
   const periodLabel = start && end
     ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
@@ -174,151 +183,101 @@ export default async function WarehousePage({ searchParams }: any) {
             <DateRangePicker start={start} end={end} min={min} max={max} />
           </div>
 
-          {/* Hero */}
-          <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-teal-600 via-teal-700 to-cyan-800 p-8 text-white shadow-xl">
-            <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
-            <div className="relative">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal-200">仓库表现 Warehouse Performance</p>
-              <h2 className="mt-3 text-3xl font-bold tracking-tight">
-                {warehouses.length} 个仓库
-              </h2>
-              <p className="mt-1 text-sm font-medium text-teal-200">
-                {warehouses.length} warehouses
+          {/* Hero：与供应商页同款指标卡 */}
+          <p className="text-sm font-semibold uppercase tracking-widest text-indigo-500">仓库概览 Warehouse Overview</p>
+          <section className="mt-3 grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">仓库数量 Warehouses</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">{warehouses.length}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">个仓库有发单</p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">达成率 Fulfillment</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">
+                {totalRequested > 0 ? formatPercent((totalAccepted / totalRequested) * 100) : "—"}
               </p>
-              <p className="mt-3 text-sm leading-6 text-teal-100">
-                {formatNumber(totalAccepted)} / {formatNumber(totalRequested)} 人次最终被接受，
-                还有 {formatNumber(totalUnfilled)} 人次没派出去。
-                {best?.acceptanceRate != null && <>达成率最高的是 <strong className="text-white">{best.name}</strong>（{formatPercent(best.acceptanceRate)}），</>}
-                {worst?.acceptanceRate != null && <>最低的是 <strong className="text-white">{worst.name}</strong>（{formatPercent(worst.acceptanceRate)}），</>}
-                {largestGap && <>未派遣缺口最大的是 <strong className="text-white">{largestGap.name}</strong>（{formatNumber(largestGap.unfilled)} 人次）。</>}
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                已接受 ÷ 已发单 = {formatNumber(totalAccepted)} ÷ {formatNumber(totalRequested)}
               </p>
-              <div className="mt-6 grid max-w-3xl grid-cols-2 gap-4 md:grid-cols-4">
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalRequested)}</p>
-                  <p className="mt-1 text-xs text-teal-200">总需求<br />Requested</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalFilled)}</p>
-                  <p className="mt-1 text-xs text-teal-200">已派遣<br />Dispatched</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalArrived)}</p>
-                  <p className="mt-1 text-xs text-teal-200">实际到场<br />Arrived</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-2xl font-bold">{formatNumber(totalUnfilled)}</p>
-                  <p className="mt-1 text-xs text-teal-200">未派遣缺口<br />Gap</p>
-                </div>
-              </div>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">已派遣 Dispatched</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">{formatNumber(totalFilled)}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                派遣率 {totalRequested > 0 ? formatPercent((totalFilled / totalRequested) * 100) : "—"}
+              </p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">已接受 Accepted</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-indigo-600">{formatNumber(totalAccepted)}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                {best?.fulfillmentRate != null && <>最高 {best.name} {formatPercent(best.fulfillmentRate)}</>}
+              </p>
             </div>
           </section>
 
-          {/* Spotlight */}
-          <section className="mt-6 grid gap-4 md:grid-cols-3">
-            {best && best.acceptanceRate != null && (
-              <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600">🏆 达成率最高 Best</p>
-                <p className="mt-3 truncate text-lg font-bold">{best.name}</p>
-                <p className="mt-1 text-3xl font-bold text-emerald-600">{formatPercent(best.acceptanceRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(best.accepted ?? 0)} / {formatNumber(best.requested)} 已接受 accepted</p>
-              </div>
-            )}
-            {worst && worst.acceptanceRate != null && (
-              <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">⚠️ 达成率最低 Attention</p>
-                <p className="mt-3 truncate text-lg font-bold">{worst.name}</p>
-                <p className="mt-1 text-3xl font-bold text-rose-600">{formatPercent(worst.acceptanceRate)}</p>
-                <p className="mt-2 text-xs text-slate-500">{formatNumber(worst.accepted ?? 0)} / {formatNumber(worst.requested)} 已接受 accepted</p>
-              </div>
-            )}
-            {largestGap && (
-              <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">📊 最大缺口 Largest Gap</p>
-                <p className="mt-3 truncate text-lg font-bold">{largestGap.name}</p>
-                <p className="mt-1 text-3xl font-bold text-amber-600">{formatNumber(largestGap.unfilled)}</p>
-                <p className="mt-2 text-xs text-slate-500">未派遣 Undispatched · 需求 Requested {formatNumber(largestGap.requested)}</p>
-              </div>
-            )}
-          </section>
-
-          {/* Warehouse cards */}
+          {/* 散点图：发单量 vs 达成率 */}
           <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold">仓库排名 Warehouse Ranking</h3>
-                <p className="mt-1 text-xs text-slate-400">按达成率从高到低排序 Rank by Fulfillment Rate (High to Low) · 数据来源：用工需求池（发单详情）+ 人员到岗表 Source: Labor Demand Pool + Arrival Tracking</p>
-              </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">{warehouses.length} 个 warehouses</span>
+            <h3 className="text-lg font-bold">发单量 vs 达成率 Volume vs Fulfillment</h3>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-slate-400">右下（量大率低）最危险</p>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
+                </span>
+                悬停圆点看详情
+              </span>
             </div>
+            <div className="mt-4">
+              <WarehouseScatter warehouses={warehouses} />
+            </div>
+          </section>
 
-            <div className="mt-6 space-y-5">
-              {warehouses.map((w, i) => {
-                const fr = w.acceptanceRate ?? 0;
-                const barColor = fr >= 80 ? "from-emerald-400 to-emerald-600"
-                  : fr >= 60 ? "from-amber-400 to-amber-600"
-                  : "from-rose-400 to-rose-600";
-                const textColor = fr >= 80 ? "text-emerald-600"
-                  : fr >= 60 ? "text-amber-600" : "text-rose-600";
-                const arrivalAbnormal = w.arrivalRate !== null && (w.arrivalRate > 115 || w.arrivalRate < 70);
-                return (
-                  <div key={w.name} className="group rounded-2xl border border-slate-100 p-4 transition hover:border-teal-100 hover:bg-teal-50/30 md:p-5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
-                          i === 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
-                        }`}>{i + 1}</span>
-                        <span className="truncate text-sm font-semibold">{w.name}</span>
-                      </div>
-                      <span className={`ml-4 shrink-0 text-lg font-bold ${textColor}`}>
-                        {w.acceptanceRate !== null ? formatPercent(w.acceptanceRate) : "—"}
-                      </span>
-                    </div>
-                    <div className="ml-11 mt-2 h-3 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className={`h-full rounded-full bg-gradient-to-r ${barColor} transition-all duration-700`}
-                        style={{ width: `${Math.min(fr, 100)}%` }}
-                      />
-                    </div>
-                    <div className="ml-11 mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-400 md:grid-cols-5">
-                      <span>{formatNumber(w.requested)} 已发单 Issued</span>
-                      <span>
-                        {formatNumber(w.filled)} 已派遣 Dispatched
-                        <span className="text-slate-500"> ({formatPercent(w.rate)})</span>
-                      </span>
-                      {w.arrived !== null ? (
-                        <span>
-                          {formatNumber(w.arrived)} 实际到场 Arrived
-                          {w.arrivalRate !== null && (
-                            <span className={arrivalAbnormal ? "font-semibold text-amber-600" : "text-slate-500"}>
-                              {" "}({formatPercent(w.arrivalRate)})
-                            </span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">实际到场 —</span>
-                      )}
-                      {w.accepted !== null ? (
-                        <span className="font-medium text-emerald-600">
-                          {formatNumber(w.accepted)} 已接受 Accepted
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">已接受 —</span>
-                      )}
-                      <span className="font-medium text-rose-500">
-                        {formatNumber(w.unfilled)} 未派遣缺口 Gap
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+          {/* 需要盯紧：一条紧凑预警横条 */}
+          {dangerous && (
+            <section className="mt-6 flex items-start gap-3 rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 to-white p-4 shadow-sm md:p-5">
+              <span className="mt-0.5 text-xl">⚠️</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-800">
+                  需要盯紧 Needs Attention
+                  <span className="ml-2 font-normal text-slate-400">系统自动挑出最值得看的问题</span>
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  <strong className="text-rose-600">{dangerous.name}</strong>
+                  （发单 {formatNumber(dangerous.requested)} 人次）达成率仅{" "}
+                  <strong className="text-rose-600">{formatPercent(dangerous.fulfillmentRate ?? 0)}</strong>
+                  ，量大率低优先处理。
+                  {largestGap && largestGap.name !== dangerous.name && (
+                    <>
+                      另 <strong className="text-amber-600">{largestGap.name}</strong> 缺口最大，
+                      {formatNumber(largestGap.unfilled)} 人次没派出去。
+                    </>
+                  )}
+                  {inflated && (
+                    <>
+                      <strong className="text-indigo-600">{inflated.name}</strong> 达成率{" "}
+                      {formatPercent(inflated.fulfillmentRate ?? 0)} 看着高但只发了{" "}
+                      {formatNumber(inflated.requested)} 单，样本小别太当真。
+                    </>
+                  )}
+                </p>
+              </div>
+            </section>
+          )}
+
+          {/* 仓库明细：表格 + 小bar + 排序切换 + 悬停详情 */}
+          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
+            <h3 className="text-lg font-bold">仓库明细 Warehouse Details</h3>
+            <div className="mt-4">
+              <WarehouseTable warehouses={warehouses} />
             </div>
           </section>
 
           {/* Footer */}
           <div className="pb-8 pt-6 text-center">
             <Link href="/" className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">← 返回总览 Back to Overview</Link>
-            <p className="mt-3 text-[11px] text-slate-400">派遣率 = 已派遣 ÷ 已发单 · Dispatch rate = dispatched ÷ issued</p>
+            <p className="mt-3 text-[11px] text-slate-400">达成率 = 已接受 ÷ 已发单 · Fulfillment rate = accepted ÷ issued</p>
           </div>
         </div>
       </main>

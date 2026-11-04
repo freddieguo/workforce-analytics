@@ -341,6 +341,25 @@ export function getDashboardData() {
       arrivalTrackingDailyJob: getDataset(dashboard, "arrival_tracking_daily_job"),
       arrivalTrackingDailyReason: getDataset(dashboard, "arrival_tracking_daily_reason"),
 
+      allocDailySupplierWarehouse: getDataset(dashboard, "alloc_daily_supplier_warehouse"),
+      arrivalTrackingDailySupplierWarehouse: getDataset(dashboard, "arrival_tracking_daily_supplier_warehouse"),
+
+      allocDailySupplierJob: getDataset(dashboard, "alloc_daily_supplier_job"),
+      arrivalDailySupplierJob: getDataset(dashboard, "arrival_daily_supplier_job"),
+      arrivalDailySupplierReason: getDataset(dashboard, "arrival_daily_supplier_reason"),
+
+      /* =====================================================
+       * CANCEL / EOA
+       *
+       * 删除表（End of Assignment / Warning），被结束页
+       * /cancel 只读这三行。管线还没产出时 getDataset
+       * 返回空数组，页面显示暂无数据说明，不会报错。
+       * =================================================== */
+
+      eoaDailySupplier: getDataset(dashboard, "eoa_daily_supplier"),
+      eoaDailyWarehouse: getDataset(dashboard, "eoa_daily_warehouse"),
+      eoaDailyReason: getDataset(dashboard, "eoa_daily_reason"),
+
 
 
   };

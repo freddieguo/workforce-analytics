@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type SidebarIconType =
   | "overview"
   | "supplier"
   | "warehouse"
   | "trial"
-  | "data";
+  | "data"
+  | "group"
+  | "cancel"
+  | "agency";
 
 function SidebarIcon({
   type,
@@ -82,6 +85,57 @@ function SidebarIcon({
     );
   }
 
+  if (type === "group") {
+    // 供应商与仓库的父项：两层叠放，意思是一组里有两个分析
+    return (
+      <svg
+        className={common}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+      >
+        <path d="M12 3l9 5-9 5-9-5 9-5Z" />
+        <path d="M3 13l9 5 9-5" />
+      </svg>
+    );
+  }
+
+  if (type === "cancel") {
+    // 被结束：一个人 + 右上角的 ×，意思是一个人被结束了，不再是三条横线
+    return (
+      <svg
+        className={common}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+      >
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M17 8l5 5" />
+        <path d="M22 8l-5 5" />
+      </svg>
+    );
+  }
+
+  if (type === "agency") {
+    // 机构分析：一栋楼，不再跟供应商分析撞用两个人那个图标
+    return (
+      <svg
+        className={common}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+      >
+        <rect x="4" y="3" width="16" height="18" rx="1.5" />
+        <path d="M9 21v-4h6v4" />
+        <path d="M8 7h2" />
+        <path d="M14 7h2" />
+        <path d="M8 11h2" />
+        <path d="M14 11h2" />
+      </svg>
+    );
+  }
+
   return (
     <svg
       className={common}
@@ -96,12 +150,9 @@ function SidebarIcon({
   );
 }
 
-const navigation = [
-  {
-    name: "总览 Overview",
-    href: "/",
-    icon: "overview" as SidebarIconType,
-  },
+/* 供应商与仓库不再各占一条，收进下面这个折叠组里。
+   两个页面的路由 /supplier、/warehouse 都不动，只改侧边栏怎么显示。 */
+const supplierWarehouseGroup = [
   {
     name: "供应商分析 Supplier Analysis",
     href: "/supplier",
@@ -112,6 +163,14 @@ const navigation = [
     href: "/warehouse",
     icon: "warehouse" as SidebarIconType,
   },
+];
+
+const navigation = [
+  {
+    name: "总览 Overview",
+    href: "/",
+    icon: "overview" as SidebarIconType,
+  },
   {
     name: "工种分析 Job Analysis",
     href: "/job",
@@ -121,6 +180,21 @@ const navigation = [
     name: "被退回分析 Sent Back Analysis",
     href: "/trial",
     icon: "trial" as SidebarIconType,
+  },
+  {
+    name: "被结束分析 Cancel Analysis",
+    href: "/cancel",
+    icon: "cancel" as SidebarIconType,
+  },
+  {
+    name: "月报 Monthly Report",
+    href: "/monthly",
+    icon: "data" as SidebarIconType,
+  },  
+  {
+    name: "机构分析 Agency Analysis",
+    href: "/agency",
+    icon: "agency" as SidebarIconType,
   },
 ];
 
@@ -176,6 +250,15 @@ export default function Sidebar() {
   const isActive = (href: string) =>
     pathname === href || (href !== "/" && pathname.startsWith(href));
   const closeMobile = () => setMobileOpen(false);
+
+  /* 折叠组：点父项只展开/收起，不跳转；点子项才跳转并在手机上收起抽屉。
+     已经在供应商或仓库页时，组默认就是展开的；从别的页点进来时也自动展开。 */
+  const groupActive =
+    isActive("/supplier") || isActive("/warehouse");
+  const [groupOpen, setGroupOpen] = useState(groupActive);
+  useEffect(() => {
+    if (groupActive) setGroupOpen(true);
+  }, [pathname]);
 
   return (
     <>
@@ -264,7 +347,74 @@ export default function Sidebar() {
         </div>
 
         <nav className="space-y-1.5">
-          {navigation.map((item) => (
+          {/* 总览 */}
+          <NavLink
+            href={navigation[0].href}
+            icon={navigation[0].icon}
+            name={navigation[0].name}
+            active={isActive(navigation[0].href)}
+            onClick={closeMobile}
+          />
+
+          {/* 供应商与仓库：一个父项，点开是两条 */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setGroupOpen((v) => !v)}
+              aria-expanded={groupOpen}
+              className={`group relative flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-all duration-300 ${
+                groupActive
+                  ? "bg-white/[0.06] text-white"
+                  : "text-slate-400 hover:bg-white/[0.06] hover:text-white"
+              }`}
+            >
+              <span
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all duration-300 ${
+                  groupActive
+                    ? "bg-white/10 text-indigo-300"
+                    : "bg-white/[0.04] text-slate-500 group-hover:bg-white/10 group-hover:text-indigo-300"
+                }`}
+              >
+                <SidebarIcon type="group" />
+              </span>
+              <span
+                className={`flex-1 text-[13px] leading-tight ${
+                  groupActive ? "font-bold" : "font-medium"
+                }`}
+              >
+                达成率分析 Fulfillment Rate Analysis
+              </span>
+              <svg
+                className={`h-4 w-4 shrink-0 transition-transform duration-300 ${
+                  groupOpen ? "rotate-180" : ""
+                }`}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+              >
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            {groupOpen && (
+              <div className="ml-[21px] mt-1.5 space-y-1.5 border-l border-white/10 pl-3">
+                {supplierWarehouseGroup.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    href={item.href}
+                    icon={item.icon}
+                    name={item.name}
+                    active={isActive(item.href)}
+                    onClick={closeMobile}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 其余各项：工种、被退回、被结束、机构 */}
+          {navigation.slice(1).map((item) => (
             <NavLink
               key={item.href}
               href={item.href}

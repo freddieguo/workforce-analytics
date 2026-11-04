@@ -4,10 +4,11 @@ common.py — 原始 Excel 读取与归一化
 只做一件事：把 OTWS 导出文件读成干净的 Python 记录。
 不做任何业务聚合，聚合在 datasets.py 里。
 
-只认 2 种文件（按 sheet 名 + 表头识别，不按文件名）：
+只认 3 种文件（按 sheet 名 + 表头识别，不按文件名）：
   - 有「需求详情」+「发单详情」sheet  -> 需求池文件（旧格式）
   - 只有「需求详情」sheet，或 Sheet1 内容是需求详情（需求区域/需求仓/需求日期） -> 需求池文件（新格式单 Sheet，只有需求，没有发单分拆）
   - 有 Sheet1（含 NO SHOW / 不符合要求原因列） -> 人员到岗表
+  - 有 Sheet1（含 Warning / Cancellation / Agency 列） -> 删除表（End of Assignment / Warning）
 
 防重复导入：按文件内容哈希去重。同一个文件放两次（哪怕改了名），
 只算一次。内容有重叠但不完全相同的文件（比如全月文件 + 每日文件
@@ -156,7 +157,10 @@ def classify_workbook(path):
         hdr = " ".join(
             str(ws.cell(1, c).value or "") for c in range(1, ws.max_column + 1)
         ).upper()
-        if "NO SHOW" in hdr and "FUFILLED" in hdr:
+        if "WARNING" in hdr and "CANCELLATION" in hdr and "AGENCY" in hdr:
+            # 删除表：Sheet1，有 Warning / Cancellation / Agency 列
+            kind = "eoa"
+        elif "NO SHOW" in hdr and "FUFILLED" in hdr:
             # 人员到岗表：Sheet1，有 NO SHOW 和 Not Fufilled Reason 列
             kind = "arrival_tracking"
         elif "需求区域" in hdr and "需求仓" in hdr and "需求日期" in hdr:
@@ -338,6 +342,51 @@ def read_arrival_tracking(ws):
     return rows
 
 
+def read_eoa(ws):
+    """删除表 (Sheet1) -> list[dict]，一行一条被结束/警告记录，人次不去重。"""
+    header = [to_str(v) for v in next(ws.iter_rows(values_only=True))]
+    hdr_up = [h.upper() for h in header]
+
+    def col(*keys):
+        for i, h in enumerate(hdr_up):
+            if all(k in h for k in keys):
+                return i
+        return None
+
+    i_date = col("DATE")
+    i_wh = col("WAREHOUSE")
+    i_agency = col("AGENCY")
+    # 类型列是“警告/删除 Warning / Cancellation”，原因列也含 Warning/Cancellation
+    # 但原因列还含 REASON，类型列不含，所以这里要排除 REASON 才能定位到类型列
+    i_type = next((i for i, h in enumerate(hdr_up) if "WARNING" in h and "CANCELLATION" in h and "REASON" not in h), None)
+    i_reason = next((i for i, h in enumerate(hdr_up) if "REASON" in h), None)
+    rows = []
+    for n, row in enumerate(ws.iter_rows(values_only=True)):
+        if n == 0:
+            continue
+        raw_date = row[i_date] if i_date is not None else None
+        if hasattr(raw_date, "strftime"):
+            date = raw_date.strftime("%Y-%m-%d")
+        elif isinstance(raw_date, str) and "/" in raw_date:
+            m = re.match(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*$", raw_date)
+            date = f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}" if m else ""
+        else:
+            date = parse_date(raw_date, context=f"删除表第{n+1}行") if raw_date is not None else ""
+        if not date:
+            warn(f"删除表第{n+1}行日期为空，已跳过")
+            continue
+        type_raw = to_str(row[i_type]).strip() if i_type is not None else ""
+        rows.append({
+            "日期": date,
+            "仓库": to_str(row[i_wh]).strip() if i_wh is not None else "未分类",
+            "供应商短名": to_str(row[i_agency]).strip() if i_agency is not None else "",
+            "类型": type_raw,
+            "是否被结束": type_raw.lower() == "end of assignment",
+            "原因": to_str(row[i_reason]).strip() if i_reason is not None else "未分类",
+        })
+    return rows
+
+
 # ------------------------------------------------------------------
 # 入口：读整个 raw 目录
 # ------------------------------------------------------------------
@@ -348,6 +397,7 @@ def load_raw(raw_dir):
       "demand": [...],        # 需求详情行
       "alloc": [...],         # 发单详情行
       "arrival_tracking": [...],  # 人员到岗行
+      "eoa": [...],           # 删除表行（被结束/警告）
       "basic_info": {...},    # 基本信息透视（仅校验用）
       "files": {path: kind},  # 识别到的文件
       "empty_sources": [...], # 有表头但零数据的文件
@@ -359,7 +409,7 @@ def load_raw(raw_dir):
     reset_warnings()
     raw_dir = Path(raw_dir)
     out = {
-        "demand": [], "alloc": [], "arrival_tracking": [],
+        "demand": [], "alloc": [], "arrival_tracking": [], "eoa": [],
         "basic_info": {}, "files": {}, "empty_sources": [],
         "skipped_dupes": [],
     }
@@ -397,6 +447,14 @@ def load_raw(raw_dir):
             else:
                 out["empty_sources"].append((str(path), kind))
                 warn(f"{path.name} 只有表头、没有数据行，到岗/接受指标将为空")
+        elif kind == "eoa":
+            eoa = (read_eoa(wb["Sheet1"])
+                  if "Sheet1" in wb.sheetnames else None)
+            if eoa:
+                out["eoa"].extend(eoa)
+            else:
+                out["empty_sources"].append((str(path), kind))
+                warn(f"{path.name} 只有表头、没有数据行，被结束/警告指标将为空")
         else:
             warn(f"无法识别的文件已跳过: {path.name}")
         wb.close()

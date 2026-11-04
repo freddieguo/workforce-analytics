@@ -1,6 +1,8 @@
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import DateRangePicker from "@/components/DateRangePicker";
+import SentBackScatter from "@/components/SentBackScatter";
+import SentBackTable from "@/components/SentBackTable";
 import { getDashboardData, type CsvRow } from "@/lib/data";
 import { resolveRange, filterByDateRange, sumByKey, getSavedRange } from "@/lib/dateRange";
 
@@ -104,11 +106,57 @@ export default async function TrialFailurePage({ searchParams }: any) {
     || warehouses.reduce((s, r) => s + r.failure, 0)
     || reasons.reduce((s, r) => s + r.failure, 0);
 
-  // 拟到岗总人次（算退回率的分母）
-  const totalScheduled = sumByKey(
-    filterByDateRange(supRows, start, end), "供应商", ["拟到岗人次"]
-  ).reduce((s, r) => s + (Number(r["拟到岗人次"] ?? 0) || 0), 0);
-  const sentBackRate = totalScheduled > 0 ? (total / totalScheduled) * 100 : 0;
+  // 拟到岗总人次、No Show、已接受（算新口径被退回率的分母：有效到岗 = 拟到岗 − No Show）
+  const supDetailRows = sumByKey(filterByDateRange(supRows, start, end), "供应商",
+    ["拟到岗人次", "NoShow人次", "已接受人次", "被退回人次"]);
+  const totalScheduled = supDetailRows.reduce((s, r) => s + (Number(r["拟到岗人次"] ?? 0) || 0), 0);
+  const totalNoshow = supDetailRows.reduce((s, r) => s + (Number(r["NoShow人次"] ?? 0) || 0), 0);
+  const totalEffective = totalScheduled - totalNoshow;
+  // 新口径：被退回率 = 被退回 ÷ 有效到岗（剔除 No Show），不再除以拟到岗
+  const sentBackRate = totalEffective > 0 ? (total / totalEffective) * 100 : 0;
+
+  // 悬停卡全链路：供应商按原名，仓库按归一化名合并（同一仓中英文写法合并）
+  const supDetail = new Map<string, { scheduled: number; noshow: number; accepted: number; effective: number }>();
+  for (const r of supDetailRows) {
+    const name = String(r["供应商"] ?? "未分类");
+    const scheduled = Number(r["拟到岗人次"] ?? 0) || 0;
+    const noshow = Number(r["NoShow人次"] ?? 0) || 0;
+    supDetail.set(name, {
+      scheduled,
+      noshow,
+      accepted: Number(r["已接受人次"] ?? 0) || 0,
+      effective: scheduled - noshow,
+    });
+  }
+  const whDetail = new Map<string, { scheduled: number; noshow: number; accepted: number; effective: number }>();
+  for (const r of sumByKey(filterByDateRange(whRows, start, end), "仓库",
+    ["拟到岗人次", "NoShow人次", "已接受人次", "被退回人次"])) {
+    const name = normalizeWarehouseDisplay(String(r["仓库"] ?? "未分类"));
+    const scheduled = Number(r["拟到岗人次"] ?? 0) || 0;
+    const noshow = Number(r["NoShow人次"] ?? 0) || 0;
+    const old = whDetail.get(name) ?? { scheduled: 0, noshow: 0, accepted: 0, effective: 0 };
+    old.scheduled += scheduled;
+    old.noshow += noshow;
+    old.accepted += Number(r["已接受人次"] ?? 0) || 0;
+    old.effective += scheduled - noshow;
+    whDetail.set(name, old);
+  }
+  const suppliersDetailed = suppliers.map((s) => {
+    const d = supDetail.get(s.name);
+    return { ...s, effectiveArrived: d?.effective ?? null, accepted: d?.accepted ?? null, noshow: d?.noshow ?? null, scheduled: d?.scheduled ?? null, share: total > 0 ? (s.failure / total) * 100 : 0 };
+  });
+  const warehousesDetailed = warehouses.map((w) => {
+    const d = whDetail.get(w.name);
+    return { ...w, effectiveArrived: d?.effective ?? null, accepted: d?.accepted ?? null, noshow: d?.noshow ?? null, scheduled: d?.scheduled ?? null, share: total > 0 ? (w.failure / total) * 100 : 0 };
+  });
+  // 原因维度没有按原因的到岗数，分母只能用全公司有效到岗，悬停卡里标明全公司，避免误会成该原因自己的到岗数
+  // 占比 Share 不再列在主表，只放悬停卡，所以这里也传 share
+  const reasonsDetailed = reasons.map((r) => ({
+    ...r,
+    effectiveArrived: totalEffective,
+    effectiveLabel: "有效到岗（全公司） Effective Arrived (All)",
+    share: total > 0 ? (r.failure / total) * 100 : 0,
+  }));
 
   const topSup = suppliers[0];
   const topWh = warehouses[0];
@@ -119,36 +167,29 @@ export default async function TrialFailurePage({ searchParams }: any) {
   const top3WhShare = total > 0
     ? (warehouses.slice(0, 3).reduce((s, r) => s + r.failure, 0) / total) * 100 : 0;
 
+  // 散点图：按供应商，横轴拟到岗量，纵轴被退回率（被退回 ÷ 有效到岗，剔除 No Show）
+  const scatterRows = sumByKey(filterByDateRange(supRows, start, end), "供应商", ["被退回人次", "拟到岗人次", "NoShow人次", "已接受人次"])
+    .map((r) => {
+      const scheduled = Number(r["拟到岗人次"] ?? 0) || 0;
+      const sentBack = Number(r["被退回人次"] ?? 0) || 0;
+      const noshow = Number(r["NoShow人次"] ?? 0) || 0;
+      const effective = scheduled - noshow;
+      return {
+        name: String(r["供应商"] ?? "未分类"),
+        scheduled,
+        sentBack,
+        rate: effective > 0 ? (sentBack / effective) * 100 : null,
+        share: total > 0 ? (sentBack / total) * 100 : 0,
+        effectiveArrived: effective,
+        noshow,
+        accepted: Number(r["已接受人次"] ?? 0) || 0,
+      };
+    })
+    .filter((r) => r.name !== "未分类" && r.scheduled > 0);
+
   const periodLabel = start && end
     ? `${formatDateLabel(start)} — ${formatDateLabel(end)}`
     : "—";
-
-  const RankList = ({ items, wrapName }: { items: { name: string; failure: number }[]; wrapName?: boolean }) => (
-    <div className="space-y-4">
-      {items.slice(0, 8).map((it, i) => (
-        <div key={it.name}>
-          <div className="flex items-center justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold ${
-                i < 3 ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-500"
-              }`}>{i + 1}</span>
-              <span className={wrapName ? "text-sm font-semibold leading-snug" : "max-w-[180px] truncate text-sm font-semibold"}>{it.name}</span>
-            </div>
-            <span className="ml-3 shrink-0 text-lg font-bold text-rose-600">{formatNumber(it.failure)}</span>
-          </div>
-          <div className="ml-10 mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-rose-400 to-rose-600"
-              style={{ width: `${Math.min((it.failure / Math.max(1, items[0]?.failure ?? 1)) * 100, 100)}%` }}
-            />
-          </div>
-          <p className="ml-10 mt-1 text-[11px] text-slate-400">
-            占全部 {formatPercent(total > 0 ? (it.failure / total) * 100 : 0)}
-          </p>
-        </div>
-      ))}
-    </div>
-  );
 
   return (
     <div className="min-h-screen bg-[#f5f7fb] text-slate-900">
@@ -179,113 +220,109 @@ export default async function TrialFailurePage({ searchParams }: any) {
             <DateRangePicker start={start} end={end} min={min} max={max} />
           </div>
 
-          {/* Hero */}
-          <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-600 via-rose-700 to-red-800 p-8 text-white shadow-xl">
-            <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
-            <div className="relative">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-200">被退回总览 Sent-back Overview</p>
-              <div className="mt-4 flex items-end gap-6">
-                <p className="text-6xl font-bold tracking-tight">{formatNumber(total)}</p>
-                <div className="pb-2">
-                  <p className="text-sm text-rose-100">被退回总人次 Total Sent Back</p>
-                  <p className="mt-1 text-xs text-rose-200">口径：到了但不符合要求被退回的人次 · 数据来源：人员到岗表 Source: Arrival Tracking</p>
-                </div>
-              </div>
-              <div className="mt-6 grid max-w-2xl grid-cols-3 gap-4">
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-xl font-bold">{suppliers.length}</p>
-                  <p className="mt-1 text-xs text-rose-200">涉及供应商<br />Suppliers</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-xl font-bold">{warehouses.length}</p>
-                  <p className="mt-1 text-xs text-rose-200">涉及仓库<br />Warehouses</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-xl font-bold">{formatPercent(sentBackRate)}</p>
-                  <p className="mt-1 text-xs text-rose-200">被退回率<br />Sent-back Rate</p>
-                </div>
-              </div>
+          {/* Hero：供应商页同款白卡 */}
+          <p className="text-sm font-semibold uppercase tracking-widest text-indigo-500">被退回概览 Sent-back Overview</p>
+          <section className="mt-3 grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">被退回总人次 Total Sent Back</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-rose-600">{formatNumber(total)}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">口径：到了但不符合要求被退回的人次</p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">被退回率 Sent-back Rate</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">
+                {formatPercent(sentBackRate)}
+              </p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                被退回 ÷ 有效到岗 = {formatNumber(total)} ÷ {formatNumber(totalEffective)}
+              </p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">涉及供应商 Suppliers</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">{suppliers.length}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                {topSup && <>最多 {topSup.name} {formatNumber(topSup.failure)} 人次 · 前三占比 {formatPercent(top3SupShare)}</>}
+              </p>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">涉及仓库 Warehouses</p>
+              <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight text-slate-900">{warehouses.length}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                {topWh && <>最多 {topWh.name} {formatNumber(topWh.failure)} 人次 · 前三占比 {formatPercent(top3WhShare)}</>}
+              </p>
             </div>
           </section>
 
-          {/* Spotlight */}
-          <section className="mt-6 grid gap-4 md:grid-cols-3">
-            {topSup && (
-              <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">🔴 最多供应商 Top Supplier</p>
-                <p className="mt-3 truncate text-lg font-bold">{topSup.name}</p>
-                <p className="mt-1 text-3xl font-bold text-rose-600">{formatNumber(topSup.failure)}</p>
-                <p className="mt-2 text-xs text-slate-500">占全部 {formatPercent(total > 0 ? (topSup.failure / total) * 100 : 0)}</p>
-              </div>
-            )}
-            {topWh && (
-              <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">🔴 最多仓库 Top Warehouse</p>
-                <p className="mt-3 truncate text-lg font-bold">{topWh.name}</p>
-                <p className="mt-1 text-3xl font-bold text-rose-600">{formatNumber(topWh.failure)}</p>
-                <p className="mt-2 text-xs text-slate-500">占全部 {formatPercent(total > 0 ? (topWh.failure / total) * 100 : 0)}</p>
-              </div>
-            )}
-            {topReason && (
-              <div className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-6 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-rose-600">🔴 最多原因 Top Reason</p>
-                <p className="mt-3 text-lg font-bold leading-snug">{topReason.name}</p>
-                <p className="mt-1 text-3xl font-bold text-rose-600">{formatNumber(topReason.failure)}</p>
-                <p className="mt-2 text-xs text-slate-500">占全部 {formatPercent(total > 0 ? (topReason.failure / total) * 100 : 0)}</p>
-              </div>
-            )}
-          </section>
-
-          {/* Concentration */}
-          <section className="mt-6 grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">供应商集中度 Supplier Concentration</p>
-                  <p className="mt-1 text-sm font-bold">前三供应商占比 Top 3 Share</p>
-                </div>
-                <p className="text-3xl font-bold text-indigo-600">{formatPercent(top3SupShare)}</p>
-              </div>
-              <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
-                <div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-indigo-600" style={{ width: `${Math.min(top3SupShare, 100)}%` }} />
-              </div>
+          {/* 散点图：按供应商，拟到岗量 vs 被退回率 */}
+          <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)] md:p-8">
+            <h3 className="text-lg font-bold">拟到岗量 vs 被退回率 Scheduled vs Sent-back Rate</h3>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-slate-400">上面（退回率高）最值得看，圆点越大被退回越多</p>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
+                </span>
+                悬停圆点看详情
+              </span>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">仓库集中度 Warehouse Concentration</p>
-                  <p className="mt-1 text-sm font-bold">前三仓库占比 Top 3 Share</p>
-                </div>
-                <p className="text-3xl font-bold text-indigo-600">{formatPercent(top3WhShare)}</p>
-              </div>
-              <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
-                <div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-indigo-600" style={{ width: `${Math.min(top3WhShare, 100)}%` }} />
-              </div>
+            <div className="mt-4">
+              <SentBackScatter rows={scatterRows} />
             </div>
           </section>
 
-          {/* Rankings */}
+          {/* 需要盯紧：一条紧凑预警横条 */}
+          {topSup && (
+            <section className="mt-6 flex items-start gap-3 rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 to-white p-4 shadow-sm md:p-5">
+              <span className="mt-0.5 text-xl">⚠️</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-800">
+                  需要盯紧 Needs Attention
+                  <span className="ml-2 font-normal text-slate-400">系统自动挑出最值得看的问题</span>
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  <strong className="text-rose-600">{topSup.name}</strong>
+                  被退回最多，{formatNumber(topSup.failure)} 人次，
+                  占全部 {formatPercent(total > 0 ? (topSup.failure / total) * 100 : 0)}，优先处理。
+                  {topWh && topWh.name !== topSup.name && (
+                    <>
+                      另 <strong className="text-amber-600">{topWh.name}</strong> 仓库被退回最多，
+                      {formatNumber(topWh.failure)} 人次。
+                    </>
+                  )}
+                  {topReason && (
+                    <>
+                      最多的退回原因是 <strong className="text-indigo-600">{topReason.name}</strong>，
+                      {formatNumber(topReason.failure)} 人次。
+                    </>
+                  )}
+                </p>
+              </div>
+            </section>
+          )}
+
+          {/* 明细：跟供应商/仓库表同一套格式，三张表 */}
           <section className="mt-6 grid gap-6 xl:grid-cols-3">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="font-bold">供应商排名 By Supplier</h3>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <h3 className="text-lg font-bold">供应商排名 By Supplier</h3>
               <p className="mt-1 text-xs text-slate-400">按被退回人次排序 Rank by Sent-back Count</p>
-              <div className="mt-5"><RankList items={suppliers} /></div>
+              <div className="mt-4"><SentBackTable items={suppliersDetailed} /></div>
             </div>
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="font-bold">仓库排名 By Warehouse</h3>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <h3 className="text-lg font-bold">仓库排名 By Warehouse</h3>
               <p className="mt-1 text-xs text-slate-400">按被退回人次排序 Rank by Sent-back Count</p>
-              <div className="mt-5"><RankList items={warehouses} /></div>
+              <div className="mt-4"><SentBackTable items={warehousesDetailed} /></div>
             </div>
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="font-bold">原因排名 By Reason</h3>
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_2px_12px_rgba(15,23,42,0.04)]">
+              <h3 className="text-lg font-bold">原因排名 By Reason</h3>
               <p className="mt-1 text-xs text-slate-400">按被退回人次排序 Rank by Sent-back Count</p>
-              <div className="mt-5"><RankList items={reasons} wrapName /></div>
+              <div className="mt-4"><SentBackTable items={reasonsDetailed} /></div>
             </div>
           </section>
 
           <div className="pb-8 pt-6 text-center">
             <Link href="/" className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">← 返回总览 Back to Overview</Link>
-            <p className="mt-3 text-[11px] text-slate-400">被退回率 = 被退回人次 ÷ 拟到岗人次 · Sent-back rate = sent back ÷ scheduled</p>
+            <p className="mt-3 text-[11px] text-slate-400">被退回率 = 被退回人次 ÷ 有效到岗人次（剔除 No Show） · Sent-back rate = sent back ÷ effective arrived</p>
           </div>
         </div>
       </main>
